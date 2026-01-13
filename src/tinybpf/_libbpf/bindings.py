@@ -12,7 +12,6 @@ import ctypes
 import ctypes.util
 import errno
 import os
-from functools import cached_property
 from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,24 +19,30 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ctypes import CDLL
 
+
 # Opaque pointer types for libbpf structures
-class _bpf_object(ctypes.Structure):
+# Using lowercase names to match C libbpf naming convention
+class _bpf_object(ctypes.Structure):  # noqa: N801
     """Opaque struct bpf_object pointer."""
+
     pass
 
 
-class _bpf_program(ctypes.Structure):
+class _bpf_program(ctypes.Structure):  # noqa: N801
     """Opaque struct bpf_program pointer."""
+
     pass
 
 
-class _bpf_map(ctypes.Structure):
+class _bpf_map(ctypes.Structure):  # noqa: N801
     """Opaque struct bpf_map pointer."""
+
     pass
 
 
-class _bpf_link(ctypes.Structure):
+class _bpf_link(ctypes.Structure):  # noqa: N801
     """Opaque struct bpf_link pointer."""
+
     pass
 
 
@@ -48,8 +53,9 @@ bpf_map_p = ctypes.POINTER(_bpf_map)
 bpf_link_p = ctypes.POINTER(_bpf_link)
 
 
-class bpf_object_open_opts(ctypes.Structure):
+class bpf_object_open_opts(ctypes.Structure):  # noqa: N801
     """Options for bpf_object__open_file."""
+
     _fields_ = [
         ("sz", ctypes.c_size_t),
         ("object_name", ctypes.c_char_p),
@@ -64,8 +70,9 @@ class bpf_object_open_opts(ctypes.Structure):
     ]
 
 
-class bpf_map_info(ctypes.Structure):
+class bpf_map_info(ctypes.Structure):  # noqa: N801
     """BPF map info structure returned by bpf_map_get_info_by_fd."""
+
     _fields_ = [
         ("type", ctypes.c_uint32),
         ("id", ctypes.c_uint32),
@@ -463,9 +470,7 @@ class LibBPF:
             raise LibBPFError(f"Program not found: {name}")
         return prog
 
-    def next_program(
-        self, obj: bpf_object_p, prog: bpf_program_p | None
-    ) -> bpf_program_p | None:
+    def next_program(self, obj: bpf_object_p, prog: bpf_program_p | None) -> bpf_program_p | None:
         """Get the next program in a BPF object."""
         result = self._lib.bpf_object__next_program(obj, prog)
         return result if result else None
@@ -510,9 +515,7 @@ class LibBPF:
         self.check_error(link, f"bpf_program__attach_kprobe({func_name})")
         return link
 
-    def attach_tracepoint(
-        self, prog: bpf_program_p, category: str, name: str
-    ) -> bpf_link_p:
+    def attach_tracepoint(self, prog: bpf_program_p, category: str, name: str) -> bpf_link_p:
         """Attach a program to a tracepoint."""
         cat_bytes = category.encode("utf-8")
         name_bytes = name.encode("utf-8")
@@ -533,9 +536,7 @@ class LibBPF:
     ) -> bpf_link_p:
         """Attach a program to a uprobe."""
         path_bytes = binary_path.encode("utf-8")
-        link = self._lib.bpf_program__attach_uprobe(
-            prog, retprobe, pid, path_bytes, func_offset
-        )
+        link = self._lib.bpf_program__attach_uprobe(prog, retprobe, pid, path_bytes, func_offset)
         if not link:
             err = ctypes.get_errno()
             raise LibBPFError(f"Failed to attach uprobe: {binary_path}+{func_offset}", err)
@@ -691,9 +692,8 @@ class LibBPF:
     ) -> None:
         """Delete an element from a map."""
         ret = self._lib.bpf_map__delete_elem(map_ptr, key, key_size, 0)
-        if ret < 0:
-            if ctypes.get_errno() != errno.ENOENT:
-                raise LibBPFError("Failed to delete map element", -ret)
+        if ret < 0 and ctypes.get_errno() != errno.ENOENT:
+            raise LibBPFError("Failed to delete map element", -ret)
 
     def map_get_next_key(
         self,

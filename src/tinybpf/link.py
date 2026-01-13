@@ -7,6 +7,7 @@ BPF programs and kernel hooks.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -156,7 +157,5 @@ class BPFLink:
     def __del__(self) -> None:
         """Destructor - ensures link is properly destroyed."""
         if not self._destroyed:
-            try:
+            with contextlib.suppress(Exception):
                 self.detach()
-            except Exception:
-                pass  # Ignore errors during cleanup

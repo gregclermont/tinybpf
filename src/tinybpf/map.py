@@ -12,7 +12,7 @@ import struct
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Generic, TypeVar, overload
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from tinybpf._libbpf import get_libbpf
 from tinybpf._libbpf.bindings import bpf_map_p
@@ -146,9 +146,7 @@ class BPFMap:
             # Pad with zeros
             key = key + b"\x00" * (self.key_size - len(key))
         elif len(key) > self.key_size:
-            raise BPFMapError(
-                f"Key size {len(key)} exceeds map key size {self.key_size}"
-            )
+            raise BPFMapError(f"Key size {len(key)} exceeds map key size {self.key_size}")
         return key
 
     def _validate_value(self, value: bytes) -> bytes:
@@ -157,9 +155,7 @@ class BPFMap:
             # Pad with zeros
             value = value + b"\x00" * (self.value_size - len(value))
         elif len(value) > self.value_size:
-            raise BPFMapError(
-                f"Value size {len(value)} exceeds map value size {self.value_size}"
-            )
+            raise BPFMapError(f"Value size {len(value)} exceeds map value size {self.value_size}")
         return value
 
     def lookup(self, key: bytes) -> bytes | None:
@@ -176,9 +172,7 @@ class BPFMap:
             BPFMapError: If the lookup fails for reasons other than key not found.
         """
         key = self._validate_key(key)
-        return self._libbpf.map_lookup_elem(
-            self._ptr, key, self.key_size, self.value_size
-        )
+        return self._libbpf.map_lookup_elem(self._ptr, key, self.key_size, self.value_size)
 
     def update(
         self,
@@ -225,9 +219,7 @@ class BPFMap:
         """
         cur_key: bytes | None = None
         while True:
-            next_key = self._libbpf.map_get_next_key(
-                self._ptr, cur_key, self.key_size
-            )
+            next_key = self._libbpf.map_get_next_key(self._ptr, cur_key, self.key_size)
             if next_key is None:
                 break
             yield next_key
@@ -416,7 +408,8 @@ class TypedBPFMap(Generic[K, V]):
             expected = struct.calcsize(value_format)
             if expected != bpf_map.value_size:
                 raise ValueError(
-                    f"Value format size {expected} doesn't match map value size {bpf_map.value_size}"
+                    f"Value format size {expected} doesn't match "
+                    f"map value size {bpf_map.value_size}"
                 )
         if key_type:
             expected = ctypes.sizeof(key_type)
@@ -490,9 +483,7 @@ class TypedBPFMap(Generic[K, V]):
             return None
         return self._deserialize_value(raw_value)
 
-    def update(
-        self, key: K, value: V, flags: MapUpdateFlags = MapUpdateFlags.ANY
-    ) -> None:
+    def update(self, key: K, value: V, flags: MapUpdateFlags = MapUpdateFlags.ANY) -> None:
         """Update or insert a key-value pair."""
         raw_key = self._serialize_key(key)
         raw_value = self._serialize_value(value)
@@ -505,7 +496,7 @@ class TypedBPFMap(Generic[K, V]):
 
     def keys(self) -> Iterator[K]:
         """Iterate over all keys."""
-        for raw_key in self._map.keys():
+        for raw_key in self._map:
             yield self._deserialize_key(raw_key)
 
     def values(self) -> Iterator[V]:
@@ -583,7 +574,7 @@ class BPFMapCollection:
         try:
             map_ptr = self._libbpf.find_map_by_name(self._obj._ptr, name)
         except Exception:
-            raise BPFNotFoundError(f"Map not found: {name}")
+            raise BPFNotFoundError(f"Map not found: {name}") from None
 
         bpf_map = BPFMap(map_ptr, self._obj)
         self._cache[name] = bpf_map

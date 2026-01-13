@@ -2,11 +2,7 @@ name: Build Wheels
 
 on:
   push:
-    branches: [main]
-    tags:
-      - "v*"
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -15,24 +11,17 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [x86_64, aarch64]
+        arch: [x86_64]  # Start with x86_64 only for faster CI
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        if: matrix.arch == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: Build libbpf in manylinux container
         run: |
           docker run --rm \
-            --platform linux/${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }} \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
-            quay.io/pypa/manylinux_2_28_${{ matrix.arch }} \
+            quay.io/pypa/manylinux_2_28_x86_64 \
             bash -c '
               set -ex
 
@@ -49,8 +38,9 @@ jobs:
               # Copy to workspace
               mkdir -p /workspace/src/tinybpf/_libbpf
               cp libbpf.so.1.4.0 /workspace/src/tinybpf/_libbpf/
-              ln -sf libbpf.so.1.4.0 /workspace/src/tinybpf/_libbpf/libbpf.so.1
-              ln -sf libbpf.so.1 /workspace/src/tinybpf/_libbpf/libbpf.so
+              cd /workspace/src/tinybpf/_libbpf
+              ln -sf libbpf.so.1.4.0 libbpf.so.1
+              ln -sf libbpf.so.1 libbpf.so
 
               # Verify
               ls -la /workspace/src/tinybpf/_libbpf/
@@ -63,18 +53,9 @@ jobs:
           path: src/tinybpf/_libbpf/libbpf.so*
 
   build-wheels:
-    name: Build wheels for ${{ matrix.os }}-${{ matrix.arch }}
+    name: Build wheels
     needs: build-libbpf
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            arch: x86_64
-            cibw_arch: x86_64
-          - os: ubuntu-latest
-            arch: aarch64
-            cibw_arch: aarch64
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -82,38 +63,34 @@ jobs:
       - name: Download libbpf artifact
         uses: actions/download-artifact@v4
         with:
-          name: libbpf-${{ matrix.arch }}
+          name: libbpf-x86_64
           path: src/tinybpf/_libbpf/
 
-      - name: Fix library permissions and symlinks
+      - name: Verify libbpf files
         run: |
-          chmod +x src/tinybpf/_libbpf/libbpf.so* || true
           ls -la src/tinybpf/_libbpf/
+          file src/tinybpf/_libbpf/libbpf.so* || true
 
-      - name: Set up QEMU
-        if: matrix.arch == 'aarch64'
-        uses: docker/setup-qemu-action@v3
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          platforms: arm64
+          python-version: "3.11"
 
-      - name: Build wheels
+      - name: Build wheels with cibuildwheel
         uses: pypa/cibuildwheel@v2.21
         env:
-          CIBW_ARCHS: ${{ matrix.cibw_arch }}
-          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
+          CIBW_ARCHS: x86_64
+          CIBW_BUILD: "cp311-manylinux_x86_64"  # Build only one for testing
           CIBW_SKIP: "*-musllinux_*"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
-          CIBW_BEFORE_BUILD: |
-            pip install setuptools wheel
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: |
-            # Don't run auditwheel - we bundle libbpf ourselves
+          CIBW_BEFORE_BUILD: pip install setuptools wheel
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             cp {wheel} {dest_dir}/
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}-${{ matrix.arch }}
+          name: wheels-x86_64
           path: ./wheelhouse/*.whl
 
   build-sdist:
@@ -121,6 +98,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Build sdist
         run: |
@@ -133,31 +115,34 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
-  compile-bpf-programs:
-    name: Compile test BPF programs
+  test-wheel:
+    name: Test wheel installation
+    needs: build-wheels
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang llvm libbpf-dev
-
-      - name: Compile BPF programs
-        run: |
-          cd bpf
-          make all
-
-      - name: Upload compiled BPF programs
-        uses: actions/upload-artifact@v4
+      - name: Download wheel
+        uses: actions/download-artifact@v4
         with:
-          name: bpf-programs
-          path: bpf/*.bpf.o
+          name: wheels-x86_64
+          path: ./wheelhouse/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install wheel and test import
+        run: |
+          pip install ./wheelhouse/*.whl
+          python -c "import tinybpf; print(f'tinybpf {tinybpf.__version__} imported successfully')"
+          python -c "from tinybpf import load, BPFObject, BPFProgram, BPFMap, BPFLink; print('All classes imported')"
+          python -c "from tinybpf import MapType, ProgramType; print(f'MapType.HASH = {MapType.HASH}')"
 
   publish:
     name: Publish to PyPI
-    needs: [build-wheels, build-sdist]
+    needs: [build-wheels, build-sdist, test-wheel]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
 

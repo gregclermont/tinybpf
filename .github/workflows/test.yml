@@ -2,65 +2,11 @@ name: Test
 
 on:
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang \
-            llvm \
-            libbpf-dev \
-            linux-headers-$(uname -r) \
-            linux-tools-common \
-            linux-tools-$(uname -r) || true
-
-      - name: Compile test BPF programs
-        run: |
-          cd bpf
-          # Try to generate vmlinux.h from kernel BTF if available
-          if [ -f /sys/kernel/btf/vmlinux ]; then
-            sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h || true
-          fi
-          make all || echo "BPF compilation may fail in CI without BTF, continuing..."
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Run linting
-        run: |
-          ruff check src/
-          ruff format --check src/
-
-      - name: Run type checking
-        run: |
-          mypy src/tinybpf/ --ignore-missing-imports
-
-      - name: Run tests
-        run: |
-          # Run tests that don't require root/BPF capabilities
-          pytest tests/ -v --ignore=tests/test_integration.py || true
-
   lint:
+    name: Lint and Type Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,11 +21,63 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff mypy
 
-      - name: Run ruff
-        run: |
-          ruff check src/
-          ruff format --check src/
+      - name: Run ruff check
+        run: ruff check src/
+
+      - name: Run ruff format check
+        run: ruff format --check src/
 
       - name: Run mypy
+        run: mypy src/tinybpf/ --ignore-missing-imports
+
+  test:
+    name: Test Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system dependencies
         run: |
-          mypy src/tinybpf/ --ignore-missing-imports
+          sudo apt-get update
+          sudo apt-get install -y libbpf-dev
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --ignore=tests/test_integration.py
+
+  compile-bpf:
+    name: Compile BPF Programs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libbpf-dev
+
+      - name: Compile BPF programs
+        run: |
+          cd bpf
+          make all
+
+      - name: Upload compiled BPF programs
+        uses: actions/upload-artifact@v4
+        with:
+          name: bpf-programs
+          path: bpf/*.bpf.o

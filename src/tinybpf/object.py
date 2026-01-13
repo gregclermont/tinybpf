@@ -7,12 +7,12 @@ for loading and working with pre-compiled BPF programs.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from tinybpf._libbpf import get_libbpf
-from tinybpf._libbpf.bindings import bpf_object_p, bpf_program_p
+from tinybpf._libbpf.bindings import bpf_object_p
 from tinybpf.exceptions import BPFLoadError, BPFNotFoundError
 from tinybpf.map import BPFMap, BPFMapCollection
 from tinybpf.program import BPFProgram
@@ -165,7 +165,7 @@ class BPFObject:
         try:
             prog_ptr = self._libbpf.find_program_by_name(self._ptr, name)
         except Exception:
-            raise BPFNotFoundError(f"Program not found: {name}")
+            raise BPFNotFoundError(f"Program not found: {name}") from None
 
         program = BPFProgram(prog_ptr, self)
         self._programs_cache[name] = program
@@ -234,11 +234,9 @@ class BPFObject:
 
     def __del__(self) -> None:
         """Destructor - ensures resources are cleaned up."""
-        if not self._closed:
-            try:
+        if getattr(self, "_closed", True) is False:
+            with contextlib.suppress(Exception):
                 self.close()
-            except Exception:
-                pass  # Ignore errors during cleanup
 
     def __repr__(self) -> str:
         status = "loaded" if self.is_loaded else "closed"
