@@ -12,6 +12,8 @@ ARCH := $(shell uname -m | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/')
 BPF_CFLAGS := -g -O2 -target bpf
 BPF_CFLAGS += -D__TARGET_ARCH_$(ARCH)
 BPF_CFLAGS += -I.
+# Include system libbpf headers
+BPF_CFLAGS += -I/usr/include
 
 # Find all .bpf.c files
 BPF_SRCS := $(wildcard *.bpf.c)

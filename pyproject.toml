@@ -54,6 +54,16 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 
+[[tool.mypy.overrides]]
+module = "tinybpf._libbpf.bindings"
+# ctypes pointer types aren't compatible with mypy's strict mode
+disable_error_code = ["valid-type", "no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "tinybpf.*"
+# Allow using ctypes pointer types in type annotations
+disable_error_code = ["valid-type"]
+
 [tool.ruff]
 target-version = "py39"
 line-length = 100

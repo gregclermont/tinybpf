@@ -12,7 +12,7 @@ import struct
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from tinybpf._libbpf import get_libbpf
 from tinybpf._libbpf.bindings import bpf_map_p
@@ -290,7 +290,7 @@ class BPFMap:
         value_format: str | None = None,
         key_type: type[ctypes.Structure] | None = None,
         value_type: type[ctypes.Structure] | None = None,
-    ) -> TypedBPFMap:
+    ) -> "TypedBPFMap[Any, Any]":
         """
         Create a typed view of this map.
 
