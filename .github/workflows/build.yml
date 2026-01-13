@@ -136,12 +136,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install wheel and test import
+      - name: Install wheel and run tests
         run: |
-          pip install ./dist/*.whl
-          python -c "import tinybpf; print(f'tinybpf {tinybpf.__version__} imported successfully')"
-          python -c "from tinybpf import load, BPFObject, BPFProgram, BPFMap, BPFLink; print('All classes imported')"
-          python -c "from tinybpf import MapType, ProgramType; print(f'MapType.HASH = {MapType.HASH}')"
+          pip install ./dist/*.whl pytest
+          # Run tests from a temp directory to ensure we test the installed wheel, not source
+          mkdir /tmp/test-wheel
+          cp -r tests /tmp/test-wheel/
+          cd /tmp/test-wheel
+          pytest tests/ -v --ignore=tests/test_integration.py
 
   publish:
     name: Publish to PyPI
