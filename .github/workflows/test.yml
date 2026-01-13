@@ -70,7 +70,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm libbpf-dev linux-tools-common bpftool
+          sudo apt-get install -y clang llvm libbpf-dev linux-tools-common linux-tools-$(uname -r) || true
+          # bpftool may be available as a separate package or via linux-tools
+          which bpftool || ls /usr/lib/linux-tools/*/bpftool 2>/dev/null || echo "bpftool not found, will use existing vmlinux.h"
 
       - name: Generate vmlinux.h from kernel BTF
         run: |

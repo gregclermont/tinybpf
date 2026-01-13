@@ -290,7 +290,7 @@ class BPFMap:
         value_format: str | None = None,
         key_type: type[ctypes.Structure] | None = None,
         value_type: type[ctypes.Structure] | None = None,
-    ) -> "TypedBPFMap[Any, Any]":
+    ) -> TypedBPFMap[Any, Any]:
         """
         Create a typed view of this map.
 
