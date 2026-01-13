@@ -1,0 +1,180 @@
+name: Build Wheels
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-libbpf:
+    name: Build libbpf for ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build libbpf in manylinux container
+        run: |
+          docker run --rm \
+            --platform linux/${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }} \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            quay.io/pypa/manylinux_2_28_${{ matrix.arch }} \
+            bash -c '
+              set -ex
+
+              # Install build dependencies
+              yum install -y elfutils-libelf-devel zlib-devel git
+
+              # Clone and build libbpf
+              git clone --depth 1 --branch v1.4.0 https://github.com/libbpf/libbpf.git /tmp/libbpf
+              cd /tmp/libbpf/src
+
+              # Build shared library
+              make -j$(nproc)
+
+              # Copy to workspace
+              mkdir -p /workspace/src/tinybpf/_libbpf
+              cp libbpf.so.1.4.0 /workspace/src/tinybpf/_libbpf/
+              ln -sf libbpf.so.1.4.0 /workspace/src/tinybpf/_libbpf/libbpf.so.1
+              ln -sf libbpf.so.1 /workspace/src/tinybpf/_libbpf/libbpf.so
+
+              # Verify
+              ls -la /workspace/src/tinybpf/_libbpf/
+            '
+
+      - name: Upload libbpf artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libbpf-${{ matrix.arch }}
+          path: src/tinybpf/_libbpf/libbpf.so*
+
+  build-wheels:
+    name: Build wheels for ${{ matrix.os }}-${{ matrix.arch }}
+    needs: build-libbpf
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            cibw_arch: x86_64
+          - os: ubuntu-latest
+            arch: aarch64
+            cibw_arch: aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download libbpf artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: libbpf-${{ matrix.arch }}
+          path: src/tinybpf/_libbpf/
+
+      - name: Fix library permissions and symlinks
+        run: |
+          chmod +x src/tinybpf/_libbpf/libbpf.so* || true
+          ls -la src/tinybpf/_libbpf/
+
+      - name: Set up QEMU
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21
+        env:
+          CIBW_ARCHS: ${{ matrix.cibw_arch }}
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+          CIBW_BEFORE_BUILD: |
+            pip install setuptools wheel
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: |
+            # Don't run auditwheel - we bundle libbpf ourselves
+            cp {wheel} {dest_dir}/
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.arch }}
+          path: ./wheelhouse/*.whl
+
+  build-sdist:
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build sdist
+        run: |
+          pip install build
+          python -m build --sdist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  compile-bpf-programs:
+    name: Compile test BPF programs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libbpf-dev
+
+      - name: Compile BPF programs
+        run: |
+          cd bpf
+          make all
+
+      - name: Upload compiled BPF programs
+        uses: actions/upload-artifact@v4
+        with:
+          name: bpf-programs
+          path: bpf/*.bpf.o
+
+  publish:
+    name: Publish to PyPI
+    needs: [build-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: List distribution files
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

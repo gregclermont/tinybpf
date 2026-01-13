@@ -1,0 +1,6 @@
+include pyproject.toml
+include LICENSE
+include README.md
+recursive-include src/tinybpf/_libbpf *.so*
+recursive-exclude tests *
+recursive-exclude bpf *
