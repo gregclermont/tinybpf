@@ -76,22 +76,25 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build wheels with cibuildwheel
-        uses: pypa/cibuildwheel@v2.21
-        env:
-          CIBW_ARCHS: x86_64
-          CIBW_BUILD: "cp311-manylinux_x86_64"  # Build only one for testing
-          CIBW_SKIP: "*-musllinux_*"
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_BEFORE_BUILD: pip install setuptools wheel
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
-            cp {wheel} {dest_dir}/
+      - name: Build wheel
+        run: |
+          pip install build wheel
+          python -m build --wheel
+          # Rename to manylinux tag (we bundle manylinux-compatible libbpf.so)
+          cd dist
+          for whl in *.whl; do
+            if [[ $whl == *linux_x86_64* ]]; then
+              newname="${whl/linux_x86_64/manylinux_2_28_x86_64}"
+              mv "$whl" "$newname"
+            fi
+          done
+          ls -la
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-x86_64
-          path: ./wheelhouse/*.whl
+          path: ./dist/*.whl
 
   build-sdist:
     name: Build source distribution
@@ -126,7 +129,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wheels-x86_64
-          path: ./wheelhouse/
+          path: ./dist/
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -135,7 +138,7 @@ jobs:
 
       - name: Install wheel and test import
         run: |
-          pip install ./wheelhouse/*.whl
+          pip install ./dist/*.whl
           python -c "import tinybpf; print(f'tinybpf {tinybpf.__version__} imported successfully')"
           python -c "from tinybpf import load, BPFObject, BPFProgram, BPFMap, BPFLink; print('All classes imported')"
           python -c "from tinybpf import MapType, ProgramType; print(f'MapType.HASH = {MapType.HASH}')"
