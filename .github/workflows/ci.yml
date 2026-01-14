@@ -12,13 +12,6 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'push' && (
-        contains(github.event.head_commit.modified, 'src/') ||
-        contains(github.event.head_commit.modified, 'pyproject.toml') ||
-        contains(github.event.head_commit.added, 'src/') ||
-        contains(github.event.head_commit.added, 'pyproject.toml')
-      ) || github.event_name == 'pull_request'
     strategy:
       matrix:
         arch: [x86_64, aarch64]
