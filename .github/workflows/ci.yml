@@ -37,9 +37,11 @@ jobs:
 
       - name: Build wheel
         run: |
-          pip install build
-          python -m build --wheel
+          pip install setuptools wheel
+          pip wheel . --no-build-isolation --wheel-dir dist/
           ls -la dist/
+          # Verify .so is included
+          unzip -l dist/*.whl | grep -E "\.so"
 
       - name: Rename wheel for platform
         run: |
