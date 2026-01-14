@@ -41,7 +41,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         if: inputs.arch == 'x86_64'
         with:
-          enable-cache: false
+          enable-cache: true
 
       - name: Run tests (x86_64)
         if: inputs.arch == 'x86_64'
