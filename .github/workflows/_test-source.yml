@@ -38,12 +38,14 @@ jobs:
         with:
           platforms: arm64
 
+      - uses: astral-sh/setup-uv@v4
+        if: inputs.arch == 'x86_64'
+        with:
+          enable-cache: true
+
       - name: Run tests (x86_64)
         if: inputs.arch == 'x86_64'
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          export PATH="$HOME/.local/bin:$PATH"
-          uv run --python ${{ matrix.python-version }} pytest tests/ -v
+        run: uv run --python ${{ matrix.python-version }} pytest tests/ -v
 
       - name: Run tests (aarch64)
         if: inputs.arch == 'aarch64'
