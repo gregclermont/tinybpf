@@ -113,8 +113,8 @@ jobs:
 
       - name: Install wheel and run tests
         run: |
-          # Remove source to ensure we import from installed wheel, not local source
-          rm -rf src/
+          # Remove source and pyproject.toml to ensure we import from installed wheel
+          rm -rf src/ pyproject.toml
           uv venv --python ${{ matrix.python-version }}
           uv pip install dist/*.whl pytest
           uv run pytest tests/ -v
