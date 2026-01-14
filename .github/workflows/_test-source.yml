@@ -45,7 +45,7 @@ jobs:
 
       - name: Run tests (x86_64)
         if: inputs.arch == 'x86_64'
-        run: uv run --python ${{ matrix.python-version }} pytest tests/ -v
+        run: uv run --python ${{ matrix.python-version }} --extra dev pytest tests/ -v
 
       - name: Run tests (aarch64)
         if: inputs.arch == 'aarch64'
