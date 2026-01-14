@@ -1,0 +1,86 @@
+name: Build libbpf
+
+on:
+  workflow_dispatch:
+    inputs:
+      libbpf_version:
+        description: 'libbpf version to build'
+        required: true
+        default: '1.4.0'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - name: Set up QEMU
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build libbpf
+        run: |
+          docker run --rm \
+            --platform linux/${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }} \
+            -v ${{ github.workspace }}:/output \
+            quay.io/pypa/manylinux_2_28_${{ matrix.arch }} \
+            bash -c '
+              set -ex
+              yum install -y elfutils-libelf-devel
+              cd /tmp
+              curl -L https://github.com/libbpf/libbpf/archive/refs/tags/v${{ inputs.libbpf_version }}.tar.gz | tar xz
+              cd libbpf-${{ inputs.libbpf_version }}/src
+              make
+              cp libbpf.so.* /output/
+            '
+
+      - name: List artifacts
+        run: ls -la
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: libbpf-${{ matrix.arch }}
+          path: libbpf.so.*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download x86_64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: libbpf-x86_64
+          path: x86_64
+
+      - name: Download aarch64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: libbpf-aarch64
+          path: aarch64
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          tar czf release/libbpf-x86_64.tar.gz -C x86_64 .
+          tar czf release/libbpf-aarch64.tar.gz -C aarch64 .
+          ls -la release/
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: libbpf-v${{ inputs.libbpf_version }}
+          name: libbpf v${{ inputs.libbpf_version }}
+          body: |
+            Pre-built libbpf shared libraries for tinybpf.
+
+            - libbpf-x86_64.tar.gz: Linux x86_64
+            - libbpf-aarch64.tar.gz: Linux aarch64
+          files: release/*
