@@ -4,17 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 env:
   LIBBPF_VERSION: "1.4.0"
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [x86_64, aarch64]
+        python-version: ["3.9", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -22,99 +21,13 @@ jobs:
       - name: Download libbpf
         run: |
           gh release download libbpf-v${{ env.LIBBPF_VERSION }} \
-            --pattern "libbpf-${{ matrix.arch }}.tar.gz" \
-            --dir .
+            --pattern "libbpf-x86_64.tar.gz"
           mkdir -p src/tinybpf/_libbpf
-          tar xzf libbpf-${{ matrix.arch }}.tar.gz -C src/tinybpf/_libbpf
-          ls -la src/tinybpf/_libbpf/
+          tar xzf libbpf-x86_64.tar.gz -C src/tinybpf/_libbpf/
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v4
 
-      - name: Build wheel
-        run: |
-          pip install setuptools wheel
-          pip wheel . --no-build-isolation --wheel-dir dist/
-          ls -la dist/
-          # Verify .so is included
-          unzip -l dist/*.whl | grep -E "\.so"
-
-      - name: Rename wheel for platform
-        run: |
-          cd dist
-          for f in *.whl; do
-            # Replace any platform tag with the correct manylinux tag
-            newname=$(echo "$f" | sed 's/-py3-none-any\.whl/-py3-none-manylinux_2_28_${{ matrix.arch }}.whl/')
-            mv "$f" "$newname"
-          done
-          ls -la
-
-      - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheel-${{ matrix.arch }}
-          path: dist/*.whl
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: wheels
-          pattern: wheel-*
-          merge-multiple: true
-
-      - name: List wheels
-        run: ls -la wheels/
-
-      - name: Create or update dev release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: dev
-          name: Development Build
-          prerelease: true
-          body: |
-            Latest development build from main branch.
-
-            Install with:
-            ```
-            uv add https://github.com/${{ github.repository }}/releases/download/dev/tinybpf-0.0.1-py3-none-manylinux_2_28_x86_64.whl
-            ```
-          files: wheels/*.whl
-
-  test:
-    needs: build
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download x86_64 wheel
-        uses: actions/download-artifact@v4
-        with:
-          name: wheel-x86_64
-          path: dist
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Install wheel and run tests
-        run: |
-          # Remove source and pyproject.toml to ensure we import from installed wheel
-          rm -rf src/ pyproject.toml
-          uv venv --python ${{ matrix.python-version }}
-          uv pip install dist/*.whl pytest
-          uv run pytest tests/ -v
+      - name: Run tests
+        run: uv run --python ${{ matrix.python-version }} pytest tests/ -v

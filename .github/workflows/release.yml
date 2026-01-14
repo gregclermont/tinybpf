@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0)'
+        required: true
+
+env:
+  LIBBPF_VERSION: "1.4.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download libbpf
+        run: |
+          gh release download libbpf-v${{ env.LIBBPF_VERSION }} \
+            --pattern "libbpf-${{ matrix.arch }}.tar.gz"
+          mkdir -p src/tinybpf/_libbpf
+          tar xzf libbpf-${{ matrix.arch }}.tar.gz -C src/tinybpf/_libbpf/
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Set version
+        run: sed -i 's/^version = .*/version = "${{ inputs.version }}"/' pyproject.toml
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          pip install setuptools wheel
+          pip wheel . --no-build-isolation --wheel-dir dist/
+
+      - name: Rename wheel for platform
+        run: |
+          cd dist
+          for f in *.whl; do
+            newname=$(echo "$f" | sed 's/-py3-none-any\.whl/-py3-none-manylinux_2_28_${{ matrix.arch }}.whl/')
+            mv "$f" "$newname"
+          done
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.arch }}
+          path: dist/*.whl
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: wheels
+          pattern: wheel-*
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          body: |
+            Install with:
+            ```
+            pip install -i https://gregclermont.github.io/tinybpf/ tinybpf
+            ```
+
+            Or with uv inline script metadata:
+            ```python
+            # /// script
+            # dependencies = ["tinybpf"]
+            # [tool.uv]
+            # index-url = "https://gregclermont.github.io/tinybpf/"
+            # ///
+            ```
+          files: wheels/*.whl
+
+  test-wheel:
+    needs: release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download wheel from release
+        run: |
+          gh release download v${{ inputs.version }} \
+            --pattern "*x86_64.whl" \
+            --dir dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Test installed wheel
+        run: |
+          rm -rf src/ pyproject.toml
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install dist/*.whl pytest
+          uv run pytest tests/ -v
+
+  update-index:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 0
+
+      - name: Generate package index
+        run: |
+          mkdir -p tinybpf
+          cat > tinybpf/index.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html>
+          <head><title>tinybpf</title></head>
+          <body>
+          HTMLEOF
+
+          # Fetch all wheel URLs from releases and add to index
+          gh release list --json tagName --jq '.[].tagName' | grep -v libbpf | while read tag; do
+            gh release view "$tag" --json assets --jq '.assets[].browserDownloadUrl' | grep '\.whl$' | while read url; do
+              filename=$(basename "$url")
+              echo "<a href=\"$url\">$filename</a>" >> tinybpf/index.html
+            done
+          done
+
+          cat >> tinybpf/index.html << 'HTMLEOF'
+          </body>
+          </html>
+          HTMLEOF
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Push to gh-pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add tinybpf/index.html
+          git commit -m "Update package index for v${{ inputs.version }}" || exit 0
+          git push
