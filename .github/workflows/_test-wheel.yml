@@ -41,17 +41,12 @@ jobs:
       - name: Test wheel (x86_64)
         if: inputs.arch == 'x86_64'
         run: |
-          # Remove source to ensure we test the wheel, not the source
           rm -rf src/ pyproject.toml
-
-          # Install uv
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
           export PATH="$HOME/.local/bin:$PATH"
-
-          # Create venv, install wheel and pytest, run tests
-          uv venv --python ${{ matrix.python-version }}
-          uv pip install dist/*.whl pytest
-          uv run pytest tests/ -v
+          uv venv --quiet --python ${{ matrix.python-version }}
+          uv pip install --quiet dist/*.whl pytest
+          uv run --quiet pytest tests/
 
       - name: Test wheel (aarch64)
         if: inputs.arch == 'aarch64'
@@ -62,13 +57,8 @@ jobs:
             -w /workspace \
             python:${{ matrix.python-version }}-slim \
             bash -c '
-              set -ex
-              # Remove source to ensure we test the wheel
+              set -e
               rm -rf src/ pyproject.toml
-
-              # Install wheel and pytest
-              pip install dist/*.whl pytest
-
-              # Run tests
-              pytest tests/ -v
+              pip install -q dist/*.whl pytest
+              pytest tests/
             '

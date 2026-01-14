@@ -32,11 +32,9 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install from package index
+      - name: Install and test
         run: |
-          uv venv --python ${{ matrix.python-version }}
-          uv pip install tinybpf==${{ inputs.version }} \
+          uv venv --quiet --python ${{ matrix.python-version }}
+          uv pip install --quiet tinybpf==${{ inputs.version }} pytest \
             --index-url ${{ inputs.index-url }}
-
-      - name: Run tests against installed package
-        run: uv run pytest repo/tests/ -v
+          uv run --quiet pytest repo/tests/

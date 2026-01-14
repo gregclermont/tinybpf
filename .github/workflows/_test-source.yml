@@ -45,7 +45,7 @@ jobs:
 
       - name: Run tests (x86_64)
         if: inputs.arch == 'x86_64'
-        run: uv run --python ${{ matrix.python-version }} --extra dev pytest tests/ -v
+        run: uv run --quiet --python ${{ matrix.python-version }} --extra dev pytest tests/
 
       - name: Run tests (aarch64)
         if: inputs.arch == 'aarch64'
@@ -56,7 +56,7 @@ jobs:
             -w /workspace \
             python:${{ matrix.python-version }}-slim \
             bash -c '
-              set -ex
-              pip install pytest .
-              pytest tests/ -v
+              set -e
+              pip install -q pytest .
+              pytest tests/
             '
