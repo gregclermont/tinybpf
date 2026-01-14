@@ -57,7 +57,7 @@ jobs:
           path: dist/*.whl
 
   release:
-    needs: build
+    needs: [build, test-wheel]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -92,7 +92,7 @@ jobs:
           files: wheels/*.whl
 
   test-wheel:
-    needs: release
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -101,13 +101,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download wheel from release
-        run: |
-          gh release download v${{ inputs.version }} \
-            --pattern "*x86_64.whl" \
-            --dir dist
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel-x86_64
+          path: dist
 
       - uses: astral-sh/setup-uv@v4
 

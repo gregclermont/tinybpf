@@ -1,0 +1,31 @@
+name: E2E Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to test (e.g., 0.1.0)'
+        required: true
+
+jobs:
+  test-install:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install from package index
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install tinybpf==${{ inputs.version }} \
+            --index-url https://gregclermont.github.io/tinybpf/
+
+      - name: Run tests against installed package
+        run: uv run pytest repo/tests/ -v
