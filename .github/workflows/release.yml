@@ -31,7 +31,38 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Set version
-        run: sed -i 's/^version = .*/version = "${{ inputs.version }}"/' pyproject.toml
+        run: |
+          python3 << 'EOF'
+          import re
+          import sys
+
+          version = "${{ inputs.version }}"
+
+          # Validate version format (basic semver)
+          if not re.match(r'^\d+\.\d+\.\d+(-[\w.]+)?$', version):
+              print(f"Error: Invalid version format: {version}")
+              sys.exit(1)
+
+          with open('pyproject.toml', 'r') as f:
+              content = f.read()
+
+          # Match version = "..." with any quote style
+          new_content, count = re.subn(
+              r'^version\s*=\s*["\'].*?["\']',
+              f'version = "{version}"',
+              content,
+              flags=re.MULTILINE
+          )
+
+          if count == 0:
+              print("Error: Could not find version field in pyproject.toml")
+              sys.exit(1)
+
+          with open('pyproject.toml', 'w') as f:
+              f.write(new_content)
+
+          print(f"Updated version to {version}")
+          EOF
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -57,8 +88,24 @@ jobs:
           name: wheel-${{ matrix.arch }}
           path: dist/*.whl
 
+  test-wheel-x86_64:
+    needs: build
+    uses: ./.github/workflows/_test-wheel.yml
+    with:
+      python-versions: '["3.9", "3.10", "3.11", "3.12"]'
+      arch: x86_64
+      wheel-artifact: wheel-x86_64
+
+  test-wheel-aarch64:
+    needs: build
+    uses: ./.github/workflows/_test-wheel.yml
+    with:
+      python-versions: '["3.9", "3.10", "3.11", "3.12"]'
+      arch: aarch64
+      wheel-artifact: wheel-aarch64
+
   release:
-    needs: [build, test-wheel]
+    needs: [build, test-wheel-x86_64, test-wheel-aarch64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -91,33 +138,6 @@ jobs:
             # ///
             ```
           files: wheels/*.whl
-
-  test-wheel:
-    needs: build
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download wheel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: wheel-x86_64
-          path: dist
-
-      - uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-
-      - name: Test installed wheel
-        run: |
-          rm -rf src/ pyproject.toml
-          uv venv --python ${{ matrix.python-version }}
-          uv pip install dist/*.whl pytest
-          uv run pytest tests/ -v
 
   update-index:
     needs: release

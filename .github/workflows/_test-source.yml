@@ -1,0 +1,60 @@
+name: Test Source (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: 'JSON array of Python versions to test'
+        required: true
+        type: string
+      arch:
+        description: 'Architecture (x86_64 or aarch64)'
+        required: false
+        type: string
+        default: 'x86_64'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ${{ fromJson(inputs.python-versions) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download libbpf
+        run: |
+          gh release download libbpf-v$(cat .libbpf-version) \
+            --pattern "libbpf-${{ inputs.arch }}.tar.gz"
+          mkdir -p src/tinybpf/_libbpf
+          tar xzf libbpf-${{ inputs.arch }}.tar.gz -C src/tinybpf/_libbpf/
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Set up QEMU
+        if: inputs.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Run tests (x86_64)
+        if: inputs.arch == 'x86_64'
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv run --python ${{ matrix.python-version }} pytest tests/ -v
+
+      - name: Run tests (aarch64)
+        if: inputs.arch == 'aarch64'
+        run: |
+          docker run --rm \
+            --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            python:${{ matrix.python-version }}-slim \
+            bash -c '
+              set -ex
+              pip install pytest .
+              pytest tests/ -v
+            '

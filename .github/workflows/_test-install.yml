@@ -1,0 +1,42 @@
+name: Test Install from Index (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: 'JSON array of Python versions to test'
+        required: true
+        type: string
+      version:
+        description: 'Package version to install'
+        required: true
+        type: string
+      index-url:
+        description: 'Package index URL'
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ${{ fromJson(inputs.python-versions) }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install from package index
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install tinybpf==${{ inputs.version }} \
+            --index-url ${{ inputs.index-url }}
+
+      - name: Run tests against installed package
+        run: uv run pytest repo/tests/ -v

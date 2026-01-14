@@ -1,0 +1,74 @@
+name: Test Wheel (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: 'JSON array of Python versions to test'
+        required: true
+        type: string
+      arch:
+        description: 'Architecture (x86_64 or aarch64)'
+        required: true
+        type: string
+      wheel-artifact:
+        description: 'Name of the wheel artifact to download'
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ${{ fromJson(inputs.python-versions) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.wheel-artifact }}
+          path: dist
+
+      - name: Set up QEMU
+        if: inputs.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Test wheel (x86_64)
+        if: inputs.arch == 'x86_64'
+        run: |
+          # Remove source to ensure we test the wheel, not the source
+          rm -rf src/ pyproject.toml
+
+          # Install uv
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+
+          # Create venv, install wheel and pytest, run tests
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install dist/*.whl pytest
+          uv run pytest tests/ -v
+
+      - name: Test wheel (aarch64)
+        if: inputs.arch == 'aarch64'
+        run: |
+          docker run --rm \
+            --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            python:${{ matrix.python-version }}-slim \
+            bash -c '
+              set -ex
+              # Remove source to ensure we test the wheel
+              rm -rf src/ pyproject.toml
+
+              # Install wheel and pytest
+              pip install dist/*.whl pytest
+
+              # Run tests
+              pytest tests/ -v
+            '
