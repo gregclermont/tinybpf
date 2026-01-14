@@ -141,8 +141,8 @@ jobs:
           HTMLEOF
 
           # Fetch all wheel URLs from releases and add to index
-          gh release list --json tagName --jq '.[].tagName' | grep -v libbpf | while read tag; do
-            gh release view "$tag" --json assets --jq '.assets[].browserDownloadUrl' | grep '\.whl$' | while read url; do
+          gh release list --json tagName --jq '.[].tagName' | grep '^v' | while read tag; do
+            gh release view "$tag" --json assets --jq '.assets[].url' | grep '\.whl$' | while read url; do
               filename=$(basename "$url")
               echo "<a href=\"$url\">$filename</a>" >> tinybpf/index.html
             done
