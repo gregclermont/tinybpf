@@ -58,6 +58,7 @@ jobs:
             python:${{ matrix.python-version }}-slim \
             bash -c '
               set -e
+              apt-get update -qq && apt-get install -qq -y libelf1 >/dev/null
               rm -rf src/ pyproject.toml
               pip install -q dist/*.whl pytest
               pytest tests/

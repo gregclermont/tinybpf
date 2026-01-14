@@ -57,6 +57,7 @@ jobs:
             python:${{ matrix.python-version }}-slim \
             bash -c '
               set -e
+              apt-get update -qq && apt-get install -qq -y libelf1 >/dev/null
               pip install -q pytest .
               pytest tests/
             '
