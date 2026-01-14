@@ -30,11 +30,21 @@ jobs:
             quay.io/pypa/manylinux_2_28_${{ matrix.arch }} \
             bash -c '
               set -ex
-              yum install -y elfutils-libelf-devel
+              # Install static libelf for static linking
+              yum install -y elfutils-libelf-devel elfutils-libelf-devel-static zlib-devel zlib-static
+
               cd /tmp
               curl -L https://github.com/libbpf/libbpf/archive/refs/tags/v${{ inputs.libbpf_version }}.tar.gz | tar xz
               cd libbpf-${{ inputs.libbpf_version }}/src
-              make
+
+              # Build with libelf and zlib statically linked
+              # Use -l:lib.a syntax to force static linking of specific libs
+              make LDLIBS="-l:libelf.a -l:libz.a"
+
+              # Verify no libelf/zlib dependency
+              echo "=== Checking dependencies ==="
+              ldd libbpf.so.* || true
+
               cp libbpf.so.* /output/
             '
 
