@@ -6,7 +6,7 @@ import tempfile
 import tinybpf
 
 
-def test_exports():
+def test_exports() -> None:
     """All expected symbols are exported."""
     expected = [
         # Version functions
@@ -42,28 +42,28 @@ def test_exports():
         assert hasattr(tinybpf, name), f"Missing export: {name}"
 
 
-def test_map_type_enum():
+def test_map_type_enum() -> None:
     """BpfMapType enum has expected values."""
-    assert tinybpf.BpfMapType.HASH == 1
-    assert tinybpf.BpfMapType.ARRAY == 2
-    assert tinybpf.BpfMapType.RINGBUF == 27
+    assert tinybpf.BpfMapType.HASH.value == 1
+    assert tinybpf.BpfMapType.ARRAY.value == 2
+    assert tinybpf.BpfMapType.RINGBUF.value == 27
 
 
-def test_prog_type_enum():
+def test_prog_type_enum() -> None:
     """BpfProgType enum has expected values."""
-    assert tinybpf.BpfProgType.KPROBE == 2
-    assert tinybpf.BpfProgType.TRACEPOINT == 5
-    assert tinybpf.BpfProgType.XDP == 6
+    assert tinybpf.BpfProgType.KPROBE.value == 2
+    assert tinybpf.BpfProgType.TRACEPOINT.value == 5
+    assert tinybpf.BpfProgType.XDP.value == 6
 
 
-def test_update_flags():
+def test_update_flags() -> None:
     """Update flag constants are correct."""
     assert tinybpf.BPF_ANY == 0
     assert tinybpf.BPF_NOEXIST == 1
     assert tinybpf.BPF_EXIST == 2
 
 
-def test_bpf_error():
+def test_bpf_error() -> None:
     """BpfError can be raised and caught."""
     try:
         raise tinybpf.BpfError("test error", errno=22)
@@ -72,7 +72,7 @@ def test_bpf_error():
         assert e.errno == 22
 
 
-def test_load_missing_file():
+def test_load_missing_file() -> None:
     """load() raises FileNotFoundError for missing files."""
     import pytest
 
@@ -80,7 +80,7 @@ def test_load_missing_file():
         tinybpf.load("/nonexistent/path/to/program.bpf.o")
 
 
-def test_map_info_dataclass():
+def test_map_info_dataclass() -> None:
     """MapInfo is a frozen dataclass with expected fields."""
     from dataclasses import fields
 
@@ -88,7 +88,7 @@ def test_map_info_dataclass():
     assert field_names == {"name", "type", "key_size", "value_size", "max_entries"}
 
 
-def test_program_info_dataclass():
+def test_program_info_dataclass() -> None:
     """ProgramInfo is a frozen dataclass with expected fields."""
     from dataclasses import fields
 
@@ -96,7 +96,7 @@ def test_program_info_dataclass():
     assert field_names == {"name", "section", "type"}
 
 
-def test_load_invalid_elf():
+def test_load_invalid_elf() -> None:
     """Loading a non-ELF file should raise BpfError."""
     import pytest
 
@@ -110,7 +110,7 @@ def test_load_invalid_elf():
             os.unlink(f.name)
 
 
-def test_load_truncated_elf():
+def test_load_truncated_elf() -> None:
     """Loading a truncated ELF should raise BpfError."""
     import pytest
 
