@@ -26,10 +26,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build test eBPF programs
-        run: |
-          docker run --rm -v ${{ github.workspace }}:/src \
-            ghcr.io/gregclermont/tinybpf-compile \
-            tests/bpf/*.bpf.c
+        run: make compile
 
       - name: Upload eBPF objects
         uses: actions/upload-artifact@v4
