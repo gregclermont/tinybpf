@@ -36,17 +36,42 @@ apk add libelf
 
 ## Local Development
 
-### Run tests locally
+### macOS
+
+eBPF requires Linux. On macOS, use [Lima](https://lima-vm.io/) to run tests in a VM:
 
 ```bash
-# Download libbpf for your platform (x86_64)
-gh release download libbpf-v$(cat .libbpf-version) --pattern "libbpf-x86_64.tar.gz"
-mkdir -p src/tinybpf/_libbpf
-tar xzf libbpf-x86_64.tar.gz -C src/tinybpf/_libbpf/
+# One-time setup
+make lima-create
 
-# Run tests
-uv run pytest tests/ -v
+# Run tests (auto-detects macOS, uses Lima)
+make test
 ```
+
+### Linux
+
+```bash
+# Run tests (auto-detects Linux, runs directly)
+make test
+```
+
+### Makefile targets
+
+Commands auto-detect OS and do the right thing:
+
+| Target | Description |
+|--------|-------------|
+| `make test` | Run tests (Linux: direct, macOS: via Lima) |
+| `make setup` | Download libbpf (Linux: direct, macOS: via Lima) |
+| `make compile` | Compile eBPF programs (Docker, works anywhere) |
+| `make clean` | Remove compiled objects |
+
+macOS-only:
+
+| Target | Description |
+|--------|-------------|
+| `make lima-create` | Create and configure Lima VM (one-time) |
+| `make lima-delete` | Remove Lima VM |
 
 ### Build wheel locally
 
