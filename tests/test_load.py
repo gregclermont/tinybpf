@@ -689,6 +689,103 @@ class TestBpfRingBufferAsync:
                 assert "open" in repr(rb)
             assert "closed" in repr(rb)
 
+    async def test_ringbuf_tagged_events_single_map(self, ringbuf_bpf_path: Path) -> None:
+        """Tagged events include map name for single map."""
+        import asyncio
+        import subprocess
+
+        events: list[tinybpf.RingBufferEvent] = []
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.map("events"))
+
+                async def collect() -> None:
+                    async for event in rb.events():
+                        events.append(event)
+                        if len(events) >= 1:
+                            break
+
+                async def trigger() -> None:
+                    await asyncio.sleep(0.01)
+                    subprocess.run(["/bin/true"], check=True)
+
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(collect(), trigger()),
+                        timeout=2.0,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                finally:
+                    rb.close()
+
+        assert len(events) >= 1
+        assert events[0].map_name == "events"
+        assert isinstance(events[0].data, bytes)
+        assert len(events[0].data) == 24  # pid + tid + comm
+
+    async def test_ringbuf_tagged_events_multi_map(self, ringbuf_bpf_path: Path) -> None:
+        """Tagged events include correct map names for multi-map."""
+        import asyncio
+        import subprocess
+
+        events: list[tinybpf.RingBufferEvent] = []
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                with obj.program("trace_getpid").attach():
+                    rb = tinybpf.BpfRingBuffer()
+                    rb.add(obj.map("events"))
+                    rb.add(obj.map("events2"))
+
+                    async def collect() -> None:
+                        async for event in rb.events():
+                            events.append(event)
+                            if len(events) >= 2:
+                                break
+
+                    async def trigger() -> None:
+                        await asyncio.sleep(0.01)
+                        subprocess.run(["/bin/true"], check=True)
+                        os.getpid()
+
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.gather(collect(), trigger()),
+                            timeout=2.0,
+                        )
+                    except asyncio.TimeoutError:
+                        pass
+                    finally:
+                        rb.close()
+
+        # Verify we got events and they have valid map names
+        assert len(events) >= 1
+        map_names = {e.map_name for e in events}
+        assert map_names <= {"events", "events2"}
+        for event in events:
+            assert isinstance(event, tinybpf.RingBufferEvent)
+            assert isinstance(event.data, bytes)
+
+    def test_ringbuf_tagged_events_on_callback_mode_error(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """events() raises error on callback-mode ring buffer."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            with pytest.raises(tinybpf.BpfError, match="callback-mode"):
+                rb.events()
+            rb.close()
+
+    def test_ringbuf_event_dataclass(self) -> None:
+        """RingBufferEvent dataclass has expected attributes."""
+        event = tinybpf.RingBufferEvent(map_name="test_map", data=b"test_data")
+        assert event.map_name == "test_map"
+        assert event.data == b"test_data"
+        # Frozen dataclass - should be hashable
+        assert hash(event) is not None
+
 
 class TestBpfPerfBuffer:
     """Tests for perf buffer operations."""

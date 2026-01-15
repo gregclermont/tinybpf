@@ -28,6 +28,7 @@ from tinybpf._object import (
     MapInfo,
     ProgramCollection,
     ProgramInfo,
+    RingBufferEvent,
     load,
 )
 
@@ -57,6 +58,7 @@ __all__ = [
     # Data classes
     "MapInfo",
     "ProgramInfo",
+    "RingBufferEvent",
     # Enums
     "BpfMapType",
     "BpfProgType",
