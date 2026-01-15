@@ -94,42 +94,42 @@ git push
 
 ### Building eBPF Programs
 
-tinybpf provides a reusable GitHub Action for compiling eBPF programs. It downloads libbpf headers matching the bundled version and pre-generated vmlinux.h for CO-RE support.
+tinybpf provides a Docker image for compiling eBPF programs. It bundles libbpf headers and pre-generated vmlinux.h for CO-RE support.
 
-**In this repo** (CI builds test programs automatically):
+**Local development:**
 
 ```bash
-# Test programs are in tests/bpf/*.bpf.c
-# CI compiles them before running tests
+# Compile a single file
+docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile program.bpf.c
+
+# Compile multiple files
+docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c
+
+# Output to specific directory
+docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile -o build/ src/*.bpf.c
+
+# With extra compiler flags
+docker run --rm -v $(pwd):/src -e EXTRA_CFLAGS="-DDEBUG" ghcr.io/gregclermont/tinybpf-compile program.bpf.c
 ```
 
-**In your own repo:**
+**In CI (GitHub Actions):**
 
 ```yaml
-- uses: gregclermont/tinybpf/.github/actions/build-ebpf@main
-  with:
-    sources: 'src/**/*.bpf.c'
-    libbpf-version: '1.4.0'  # Must match your tinybpf version
+- name: Build eBPF programs
+  run: |
+    docker run --rm -v ${{ github.workspace }}:/src \
+      ghcr.io/gregclermont/tinybpf-compile \
+      src/*.bpf.c
 ```
 
-**Action inputs:**
+**Image tags:**
 
-| Input | Default | Description |
-|-------|---------|-------------|
-| `sources` | `**/*.bpf.c` | Glob pattern for source files |
-| `output-dir` | (same as source) | Output directory for .bpf.o files |
-| `libbpf-version` | from `.libbpf-version` | libbpf version for headers |
-| `vmlinux-h` | (downloads pre-generated) | Custom vmlinux.h path |
-| `arch` | (auto-detect) | Target: x86_64 or aarch64 |
-| `extra-cflags` | | Additional clang flags |
+| Tag | Description |
+|-----|-------------|
+| `latest` | Latest from main branch |
+| `libbpf-X.Y.Z` | Specific libbpf version |
 
-**Action outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `object-files` | Space-separated list of compiled .bpf.o files |
-| `libbpf-headers-path` | Path to downloaded libbpf headers |
-| `vmlinux-h-path` | Path to vmlinux.h used |
+**Supported architectures:** linux/amd64, linux/arm64 (auto-detected)
 
 ### Creating a Release
 
@@ -171,12 +171,9 @@ gh run watch
 |----------|---------|---------|
 | `ci.yml` | Push/PR, manual | Fast tests (py3.12), full matrix on dispatch |
 | `build-libbpf.yml` | Manual | Build libbpf native libs for new version |
+| `build-compile-image.yml` | Push to docker/, manual | Build and publish eBPF compile Docker image |
 | `release.yml` | Manual | Full release pipeline with multi-arch testing |
 | `e2e-test.yml` | Manual | Verify released package from index |
-
-| Action | Purpose |
-|--------|---------|
-| `actions/build-ebpf` | Compile eBPF programs with matching libbpf headers |
 
 ## Useful Commands
 
