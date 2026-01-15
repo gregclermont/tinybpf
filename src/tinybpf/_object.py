@@ -604,6 +604,33 @@ class BpfRingBuffer:
             raise BpfError("No maps added to ring buffer")
         return _AsyncRingBufferIterator(self)
 
+    def __iter__(self) -> Iterator[bytes]:
+        """Iterate over queued events synchronously.
+
+        Only available in iterator mode (maps added without callbacks).
+        Events must be received first by calling poll().
+
+        Example:
+            rb = BpfRingBuffer(obj.map("events"))
+            rb.poll(timeout_ms=1000)
+            for event in rb:
+                process(event)
+
+        Yields:
+            Event data as bytes.
+
+        Raises:
+            BpfError: If ring buffer is in callback mode.
+        """
+        if self._mode == "callback":
+            raise BpfError(
+                "Cannot iterate on callback-mode ring buffer; "
+                "events are delivered to callbacks during poll()"
+            )
+        while self._event_queue:
+            _map_name, data = self._event_queue.popleft()
+            yield data
+
     def events(self) -> "_TaggedRingBufferIterator":
         """Return async iterator yielding tagged events.
 
