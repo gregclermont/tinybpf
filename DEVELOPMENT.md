@@ -92,6 +92,45 @@ git commit -m "Update libbpf to 1.5.0"
 git push
 ```
 
+### Building eBPF Programs
+
+tinybpf provides a reusable GitHub Action for compiling eBPF programs. It downloads libbpf headers matching the bundled version and pre-generated vmlinux.h for CO-RE support.
+
+**In this repo** (CI builds test programs automatically):
+
+```bash
+# Test programs are in tests/bpf/*.bpf.c
+# CI compiles them before running tests
+```
+
+**In your own repo:**
+
+```yaml
+- uses: gregclermont/tinybpf/.github/actions/build-ebpf@main
+  with:
+    sources: 'src/**/*.bpf.c'
+    libbpf-version: '1.4.0'  # Must match your tinybpf version
+```
+
+**Action inputs:**
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `sources` | `**/*.bpf.c` | Glob pattern for source files |
+| `output-dir` | (same as source) | Output directory for .bpf.o files |
+| `libbpf-version` | from `.libbpf-version` | libbpf version for headers |
+| `vmlinux-h` | (downloads pre-generated) | Custom vmlinux.h path |
+| `arch` | (auto-detect) | Target: x86_64 or aarch64 |
+| `extra-cflags` | | Additional clang flags |
+
+**Action outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `object-files` | Space-separated list of compiled .bpf.o files |
+| `libbpf-headers-path` | Path to downloaded libbpf headers |
+| `vmlinux-h-path` | Path to vmlinux.h used |
+
 ### Creating a Release
 
 ```bash
@@ -134,6 +173,10 @@ gh run watch
 | `build-libbpf.yml` | Manual | Build libbpf native libs for new version |
 | `release.yml` | Manual | Full release pipeline with multi-arch testing |
 | `e2e-test.yml` | Manual | Verify released package from index |
+
+| Action | Purpose |
+|--------|---------|
+| `actions/build-ebpf` | Compile eBPF programs with matching libbpf headers |
 
 ## Useful Commands
 
