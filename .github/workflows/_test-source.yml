@@ -15,7 +15,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.arch == 'x86_64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
     strategy:
       matrix:
         python-version: ${{ fromJson(inputs.python-versions) }}
@@ -32,32 +32,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Set up QEMU
-        if: inputs.arch == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - uses: astral-sh/setup-uv@v4
-        if: inputs.arch == 'x86_64'
         with:
           enable-cache: true
 
-      - name: Run tests (x86_64)
-        if: inputs.arch == 'x86_64'
+      - name: Run tests
         run: uv run --quiet --python ${{ matrix.python-version }} --extra dev pytest tests/
-
-      - name: Run tests (aarch64)
-        if: inputs.arch == 'aarch64'
-        run: |
-          docker run --rm \
-            --platform linux/arm64 \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            python:${{ matrix.python-version }}-slim \
-            bash -c '
-              set -e
-              apt-get update -qq && apt-get install -qq -y libelf1 >/dev/null
-              pip install -q pytest .
-              pytest tests/
-            '

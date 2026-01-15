@@ -18,7 +18,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.arch == 'x86_64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
     strategy:
       matrix:
         python-version: ${{ fromJson(inputs.python-versions) }}
@@ -32,34 +32,11 @@ jobs:
           name: ${{ inputs.wheel-artifact }}
           path: dist
 
-      - name: Set up QEMU
-        if: inputs.arch == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+      - uses: astral-sh/setup-uv@v4
 
-      - name: Test wheel (x86_64)
-        if: inputs.arch == 'x86_64'
+      - name: Test wheel
         run: |
           rm -rf src/ pyproject.toml
-          curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
-          export PATH="$HOME/.local/bin:$PATH"
           uv venv --quiet --python ${{ matrix.python-version }}
           uv pip install --quiet dist/*.whl pytest
           uv run --quiet pytest tests/
-
-      - name: Test wheel (aarch64)
-        if: inputs.arch == 'aarch64'
-        run: |
-          docker run --rm \
-            --platform linux/arm64 \
-            -v ${{ github.workspace }}:/workspace \
-            -w /workspace \
-            python:${{ matrix.python-version }}-slim \
-            bash -c '
-              set -e
-              apt-get update -qq && apt-get install -qq -y libelf1 >/dev/null
-              rm -rf src/ pyproject.toml
-              pip install -q dist/*.whl pytest
-              pytest tests/
-            '

@@ -10,22 +10,15 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.arch == 'x86_64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
     strategy:
       matrix:
         arch: [x86_64, aarch64]
 
     steps:
-      - name: Set up QEMU
-        if: matrix.arch == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: Build libbpf
         run: |
           docker run --rm \
-            --platform linux/${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }} \
             -v ${{ github.workspace }}:/output \
             quay.io/pypa/manylinux_2_28_${{ matrix.arch }} \
             bash -c '

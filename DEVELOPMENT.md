@@ -107,7 +107,7 @@ gh release view v0.2.0
 
 The release workflow:
 1. Builds wheels for x86_64 and aarch64
-2. Tests wheels on Python 3.9-3.12 (both architectures via QEMU)
+2. Tests wheels on Python 3.9-3.12 (both architectures via native runners)
 3. Creates GitHub release with wheel assets
 4. Updates package index on gh-pages
 
