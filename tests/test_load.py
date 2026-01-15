@@ -676,6 +676,52 @@ class TestBpfRingBuffer:
                 rb.add(obj.map("events2"), lambda d: 0, as_memoryview=False)
             rb.close()
 
+    def test_ringbuf_sync_iteration(self, ringbuf_bpf_path: Path) -> None:
+        """Can iterate over queued events synchronously."""
+        import subprocess
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.map("events"))
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+
+                events = list(rb)  # Sync iteration
+                assert len(events) >= 1
+                assert all(isinstance(e, bytes) for e in events)
+
+                rb.close()
+
+    def test_ringbuf_sync_iteration_drains_queue(self, ringbuf_bpf_path: Path) -> None:
+        """Sync iteration drains the event queue."""
+        import subprocess
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.map("events"))
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+
+                # First iteration drains the queue
+                events1 = list(rb)
+                assert len(events1) >= 1
+
+                # Second iteration should be empty (queue drained)
+                events2 = list(rb)
+                assert len(events2) == 0
+
+                rb.close()
+
+    def test_ringbuf_sync_iteration_callback_mode_error(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """Sync iteration on callback mode raises error."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer(obj.map("events"), callback=lambda d: 0)
+            with pytest.raises(tinybpf.BpfError, match="callback-mode"):
+                list(rb)
+            rb.close()
+
 
 class TestBpfRingBufferAsync:
     """Async tests for ring buffer operations."""
