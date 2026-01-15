@@ -22,6 +22,7 @@ from tinybpf._object import (
     BpfObject,
     BpfProgram,
     BpfProgType,
+    BpfRingBuffer,
     MapCollection,
     MapInfo,
     ProgramCollection,
@@ -47,6 +48,7 @@ __all__ = [
     "BpfProgram",
     "BpfMap",
     "BpfLink",
+    "BpfRingBuffer",
     # Collections
     "MapCollection",
     "ProgramCollection",

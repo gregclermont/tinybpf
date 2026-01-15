@@ -36,11 +36,26 @@ class _bpf_link(ctypes.Structure):
     pass
 
 
+class _ring_buffer(ctypes.Structure):
+    """Opaque libbpf ring_buffer structure."""
+
+    pass
+
+
 # Pointer types
 bpf_object_p = ctypes.POINTER(_bpf_object)
 bpf_program_p = ctypes.POINTER(_bpf_program)
 bpf_map_p = ctypes.POINTER(_bpf_map)
 bpf_link_p = ctypes.POINTER(_bpf_link)
+ring_buffer_p = ctypes.POINTER(_ring_buffer)
+
+# Callback type for ring buffer: int (*)(void *ctx, void *data, size_t size)
+RING_BUFFER_SAMPLE_FN = ctypes.CFUNCTYPE(
+    ctypes.c_int,  # return
+    ctypes.c_void_p,  # ctx
+    ctypes.c_void_p,  # data
+    ctypes.c_size_t,  # size
+)
 
 
 def _setup_function_signatures(lib: ctypes.CDLL) -> None:
@@ -154,6 +169,24 @@ def _setup_function_signatures(lib: ctypes.CDLL) -> None:
     # libbpf_get_error - returns error code from pointer (for NULL check)
     lib.libbpf_get_error.argtypes = [ctypes.c_void_p]
     lib.libbpf_get_error.restype = ctypes.c_long
+
+    # Ring buffer functions
+    lib.ring_buffer__new.argtypes = [
+        ctypes.c_int,  # map_fd
+        RING_BUFFER_SAMPLE_FN,  # sample_cb
+        ctypes.c_void_p,  # ctx
+        ctypes.c_void_p,  # opts (NULL)
+    ]
+    lib.ring_buffer__new.restype = ring_buffer_p
+
+    lib.ring_buffer__poll.argtypes = [ring_buffer_p, ctypes.c_int]
+    lib.ring_buffer__poll.restype = ctypes.c_int
+
+    lib.ring_buffer__consume.argtypes = [ring_buffer_p]
+    lib.ring_buffer__consume.restype = ctypes.c_int
+
+    lib.ring_buffer__free.argtypes = [ring_buffer_p]
+    lib.ring_buffer__free.restype = None
 
 
 def init(libbpf_path: Union[str, Path, None] = None) -> None:

@@ -20,6 +20,7 @@ def test_exports():
         "BpfProgram",
         "BpfMap",
         "BpfLink",
+        "BpfRingBuffer",
         # Collections
         "MapCollection",
         "ProgramCollection",
