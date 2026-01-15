@@ -20,7 +20,24 @@ on:
           - aarch64
 
 jobs:
+  build-ebpf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test eBPF programs
+        uses: ./.github/actions/build-ebpf
+        with:
+          sources: 'tests/bpf/*.bpf.c'
+
+      - name: Upload eBPF objects
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-ebpf-objects
+          path: tests/bpf/*.bpf.o
+
   test:
+    needs: build-ebpf
     uses: ./.github/workflows/_test-source.yml
     with:
       python-versions: ${{ inputs.python-versions || '["3.12"]' }}
