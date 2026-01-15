@@ -151,6 +151,11 @@ jobs:
           ref: gh-pages
           fetch-depth: 0
 
+      - name: Copy static files from main branch
+        run: |
+          git show origin/main:llms.txt > llms.txt
+          git show origin/main:gh-pages/index.html > index.html
+
       - name: Generate package index
         run: |
           mkdir -p tinybpf
@@ -180,6 +185,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add tinybpf/index.html
-          git commit -m "Update package index for v${{ inputs.version }}" || exit 0
+          git add index.html llms.txt tinybpf/index.html
+          git commit -m "Update package index and static files for v${{ inputs.version }}" || exit 0
           git push

@@ -48,7 +48,7 @@ lima-delete:
 	limactl delete -f $(LIMA_VM)
 
 lima-shell:
-	limactl shell $(LIMA_VM) --workdir $(PROJECT_DIR)
+	limactl shell --workdir $(PROJECT_DIR) $(LIMA_VM)
 
 setup-lima:
 	@limactl shell $(LIMA_VM) -- which make > /dev/null || \

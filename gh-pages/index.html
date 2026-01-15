@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+    <head>
+        <title>tinybpf</title>
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css"
+        />
+        <style>
+            body {
+                font-family: system-ui, sans-serif;
+                max-width: 600px;
+                margin: 2em auto;
+                padding: 0 1em;
+            }
+            pre,
+            pre[class*="language-"],
+            code,
+            code[class*="language-"] {
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco,
+                    Consolas, monospace;
+            }
+            pre,
+            pre[class*="language-"] {
+                background: #f4f4f4;
+                padding: 1em;
+                border-radius: 5px;
+                overflow-x: auto;
+                margin: 0;
+                font-size: 0.875em;
+            }
+            code,
+            code[class*="language-"] {
+                background: none;
+                padding: 0;
+                font-size: inherit;
+            }
+            h1 {
+                margin-bottom: 0.5em;
+            }
+            h2 {
+                margin-top: 1.5em;
+                margin-bottom: 0.5em;
+            }
+
+            /* CSS-only tabs */
+            .tabs {
+                margin: 0.5em 0;
+            }
+            .tabs input {
+                display: none;
+            }
+            .tabs label {
+                display: inline-block;
+                padding: 0.4em 0.8em;
+                cursor: pointer;
+                border: 1px solid #ccc;
+                border-bottom: none;
+                border-radius: 5px 5px 0 0;
+                background: #f4f4f4;
+                margin-right: 2px;
+            }
+            .tabs input:checked + label {
+                background: #fff;
+                border-bottom: 1px solid #fff;
+                margin-bottom: -1px;
+                position: relative;
+                z-index: 1;
+            }
+            .tabs .tab-content {
+                display: none;
+                border: 1px solid #ccc;
+                border-radius: 0 5px 5px 5px;
+            }
+            .tabs .tab-content pre {
+                border-radius: 0 4px 4px 4px;
+            }
+            #uv:checked ~ #uv-content,
+            #pip:checked ~ #pip-content {
+                display: block;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>tinybpf</h1>
+        <p>A minimal Python library for loading CO-RE eBPF programs.</p>
+
+        <h2>Install</h2>
+        <div class="tabs">
+            <input type="radio" name="install" id="uv" checked />
+            <label for="uv">uv</label>
+            <input type="radio" name="install" id="pip" />
+            <label for="pip">pip</label>
+            <div class="tab-content" id="uv-content">
+                <pre>
+uv add tinybpf --index https://gregclermont.github.io/tinybpf</pre
+                >
+            </div>
+            <div class="tab-content" id="pip-content">
+                <pre>
+pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf</pre
+                >
+            </div>
+        </div>
+
+        <h2>Example: inspect a .bpf.o file</h2>
+        <pre><code class="language-python"># /// script
+# dependencies = ["tinybpf"]
+# [[tool.uv.index]]
+# url = "https://gregclermont.github.io/tinybpf"
+# ///
+"""Inspect a compiled eBPF object file."""
+import sys
+import tinybpf
+
+with tinybpf.load(sys.argv[1]) as obj:
+    for p in obj.programs.values():
+        print(f"prog: {p.name} ({p.type.name})")
+    for m in obj.maps.values():
+        print(f"map:  {m.name} ({m.type.name})")</code></pre>
+        <p>
+            <small
+                >Save as <code>bpf-inspect.py</code>, run with
+                <code>sudo uv run bpf-inspect.py program.bpf.o</code></small
+            >
+        </p>
+
+        <h2>Links</h2>
+        <ul>
+            <li>
+                <a href="https://github.com/gregclermont/tinybpf">GitHub</a>
+            </li>
+            <li><a href="llms.txt">llms.txt</a></li>
+        </ul>
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    </body>
+</html>

@@ -9,14 +9,14 @@ Minimal Python library for loading and interacting with pre-compiled CO-RE eBPF 
 ## Install
 
 ```bash
-uv add tinybpf --extra-index-url https://gregclermont.github.io/tinybpf/
+uv add tinybpf --index https://gregclermont.github.io/tinybpf
 ```
 
 <details>
 <summary>pip</summary>
 
 ```bash
-pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf/
+pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf
 ```
 </details>
 
@@ -34,6 +34,18 @@ with tinybpf.load("program.bpf.o") as obj:
     # Read from a map
     for key, value in obj.maps["events"].items():
         print(key, value)
+```
+
+Typed access with `ctypes.Structure`:
+
+```python
+import ctypes
+
+class Event(ctypes.Structure):
+    _fields_ = [("pid", ctypes.c_uint32), ("comm", ctypes.c_char * 16)]
+
+for key, event in obj.maps["events"].items():
+    print(f"PID {event.pid}: {event.comm.decode()}")
 ```
 
 ## API
@@ -132,7 +144,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf/
+          pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf
           pip install pytest
 
       - name: Run tests
@@ -153,3 +165,7 @@ limactl shell ebpf -- sudo pytest /path/to/your/tests -v
 ```
 
 You'll need to configure mounts for your project directory. See this project's [Makefile](Makefile) for a complete setup with `lima-create`, `lima-shell`, and automatic mount configuration.
+
+## For AI Assistants
+
+See [llms.txt](./llms.txt) for a machine-readable API reference.
