@@ -17,12 +17,35 @@ struct {
     __uint(max_entries, 256 * 1024);
 } events SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 256 * 1024);
+} events2 SEC(".maps");
+
 SEC("tracepoint/syscalls/sys_enter_execve")
 int trace_execve(void *ctx)
 {
     struct event *e;
 
     e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e)
+        return 0;
+
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    e->pid = pid_tgid >> 32;
+    e->tid = pid_tgid;
+    bpf_get_current_comm(&e->comm, sizeof(e->comm));
+
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_getpid")
+int trace_getpid(void *ctx)
+{
+    struct event *e;
+
+    e = bpf_ringbuf_reserve(&events2, sizeof(*e), 0);
     if (!e)
         return 0;
 

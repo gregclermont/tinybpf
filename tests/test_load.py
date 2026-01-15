@@ -421,6 +421,119 @@ class TestBpfRingBuffer:
             # Ring buffer should be closed after with block
             assert "closed" in repr(rb)
 
+    def test_ringbuf_empty_constructor(self) -> None:
+        """Can create ring buffer with no args."""
+        rb = tinybpf.BpfRingBuffer()
+        assert "(no maps)" in repr(rb)
+        assert "open" in repr(rb)
+        rb.close()
+        assert "closed" in repr(rb)
+
+    def test_ringbuf_constructor_validation(self, ringbuf_bpf_path: Path) -> None:
+        """Only map or only callback raises ValueError."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            # Only map, no callback
+            with pytest.raises(ValueError, match="both be provided or both omitted"):
+                tinybpf.BpfRingBuffer(obj.map("events"))
+
+            # Only callback, no map
+            with pytest.raises(ValueError, match="both be provided or both omitted"):
+                tinybpf.BpfRingBuffer(callback=lambda d: 0)
+
+    def test_ringbuf_poll_without_maps(self) -> None:
+        """Poll on empty ring buffer raises BpfError."""
+        rb = tinybpf.BpfRingBuffer()
+        with pytest.raises(tinybpf.BpfError, match="No maps added"):
+            rb.poll()
+        rb.close()
+
+    def test_ringbuf_add_map(self, ringbuf_bpf_path: Path) -> None:
+        """Can add multiple maps and receive events from both."""
+        import subprocess
+
+        events1: list[bytes] = []
+        events2: list[bytes] = []
+
+        def callback1(data: bytes) -> int:
+            events1.append(data)
+            return 0
+
+        def callback2(data: bytes) -> int:
+            events2.append(data)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                with obj.program("trace_getpid").attach():
+                    rb = tinybpf.BpfRingBuffer()
+                    rb.add(obj.map("events"), callback1)
+                    rb.add(obj.map("events2"), callback2)
+                    with rb:
+                        # Trigger events for both maps
+                        subprocess.run(["/bin/true"], check=True)
+                        os.getpid()
+                        rb.poll(timeout_ms=100)
+
+        assert len(events1) >= 1  # From execve
+        assert len(events2) >= 1  # From getpid
+
+    def test_ringbuf_add_wrong_map_type(self, test_maps_bpf_path: Path) -> None:
+        """Adding non-RINGBUF map raises BpfError."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer()
+            with pytest.raises(tinybpf.BpfError, match="expected RINGBUF"):
+                rb.add(obj.map("pid_counts"), lambda d: 0)
+            rb.close()
+
+    def test_ringbuf_add_after_close(self, ringbuf_bpf_path: Path) -> None:
+        """Adding after close raises BpfError."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer()
+            rb.close()
+            with pytest.raises(tinybpf.BpfError, match="closed"):
+                rb.add(obj.map("events"), lambda d: 0)
+
+    def test_ringbuf_add_duplicate_map(self, ringbuf_bpf_path: Path) -> None:
+        """Adding same map twice raises BpfError."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            with pytest.raises(tinybpf.BpfError, match="already added"):
+                rb.add(obj.map("events"), lambda d: 0)
+            rb.close()
+
+    def test_ringbuf_multi_map_repr(self, ringbuf_bpf_path: Path) -> None:
+        """Repr shows all map names for multi-map ring buffer."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer()
+            rb.add(obj.map("events"), lambda d: 0)
+            rb.add(obj.map("events2"), lambda d: 0)
+            repr_str = repr(rb)
+            assert "maps=" in repr_str
+            assert "'events'" in repr_str
+            assert "'events2'" in repr_str
+            rb.close()
+
+    def test_ringbuf_multi_map_callback_exception(self, ringbuf_bpf_path: Path) -> None:
+        """Exception in any callback propagates."""
+        events: list[bytes] = []
+
+        def good_callback(data: bytes) -> int:
+            events.append(data)
+            return 0
+
+        def bad_callback(data: bytes) -> int:
+            raise ValueError("test error from callback2")
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_getpid").attach():
+                rb = tinybpf.BpfRingBuffer()
+                rb.add(obj.map("events"), good_callback)
+                rb.add(obj.map("events2"), bad_callback)
+                with rb:
+                    os.getpid()  # Triggers events2
+                    with pytest.raises(ValueError, match="test error from callback2"):
+                        rb.poll(timeout_ms=100)
+
 
 class TestBpfPerfBuffer:
     """Tests for perf buffer operations."""
