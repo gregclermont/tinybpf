@@ -9,8 +9,13 @@ jobs:
           docker run --rm quay.io/pypa/manylinux_2_28_x86_64 bash -c '
             set -ex
 
-            # Install dev packages
+            # Install dev packages (including static libs)
             yum install -y elfutils-libelf-devel zlib-devel zlib-static elfutils-libelf
+
+            # Check if static elfutils package exists
+            echo "=== Available static packages ==="
+            yum list available | grep -i "static" | grep -iE "(elf|zlib|zstd|lzma|bz)" || echo "none found"
+            yum install -y elfutils-devel elfutils-libelf-static 2>/dev/null || echo "static libelf not available"
 
             # Check static libs
             echo "=== Static libraries ==="
@@ -31,11 +36,21 @@ jobs:
             ldd libbpf.so.1
             ls -la libbpf.so.1
 
-            # Try static deps
+            # Try static deps if available
             echo "=== Static deps build ==="
-            make clean
-            make LDFLAGS="-static-libgcc -Wl,-Bstatic -lelf -lz -Wl,-Bdynamic"
-            echo "Dependencies after static link:"
-            ldd libbpf.so.1
-            ls -la libbpf.so.1
+            if [ -f /usr/lib64/libelf.a ]; then
+              make clean
+              make LDFLAGS="-static-libgcc -Wl,-Bstatic -lelf -lz -Wl,-Bdynamic"
+              echo "Dependencies after static link:"
+              ldd libbpf.so.1
+              ls -la libbpf.so.1
+            else
+              echo "No static libelf.a - trying with just static zlib"
+              make clean
+              # Link zlib statically, libelf dynamically
+              make LDFLAGS="-Wl,-Bstatic -lz -Wl,-Bdynamic -lelf"
+              echo "Dependencies with static zlib:"
+              ldd libbpf.so.1
+              ls -la libbpf.so.1
+            fi
           '
