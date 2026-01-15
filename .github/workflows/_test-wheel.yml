@@ -34,9 +34,16 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
 
+      - name: Download eBPF test objects
+        uses: actions/download-artifact@v4
+        with:
+          name: test-ebpf-objects
+          path: tests/bpf/
+        continue-on-error: true
+
       - name: Test wheel
         run: |
           rm -rf src/ pyproject.toml
           uv venv --quiet --python ${{ matrix.python-version }}
           uv pip install --quiet dist/*.whl pytest
-          uv run --quiet pytest tests/
+          uv run --quiet pytest tests/ -v --tb=short

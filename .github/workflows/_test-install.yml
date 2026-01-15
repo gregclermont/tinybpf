@@ -37,4 +37,4 @@ jobs:
           uv venv --quiet --python ${{ matrix.python-version }}
           uv pip install --quiet tinybpf==${{ inputs.version }} pytest \
             --extra-index-url ${{ inputs.index-url }}
-          uv run --quiet pytest repo/tests/
+          uv run --quiet pytest repo/tests/ -v --tb=short
