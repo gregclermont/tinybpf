@@ -67,8 +67,13 @@ gh workflow run build-libbpf.yml -f libbpf_version=1.5.0
 ### Source Layout
 ```
 src/tinybpf/
-├── __init__.py          # Public API exports (load function, all types)
-├── _object.py           # High-level wrapper classes (BpfObject, BpfProgram, BpfMap, BpfLink)
+├── __init__.py          # Public API exports
+├── _types.py            # Exception, enums, dataclasses, error helpers
+├── _link.py             # BpfLink class
+├── _map.py              # BpfMap, MapCollection
+├── _program.py          # BpfProgram, ProgramCollection
+├── _buffers.py          # BpfRingBuffer, BpfPerfBuffer
+├── _object.py           # BpfObject, load()
 └── _libbpf/
     ├── __init__.py
     └── bindings.py      # Low-level ctypes bindings to libbpf C functions
@@ -84,7 +89,7 @@ src/tinybpf/
 
 4. **Context managers**: `BpfObject` and `BpfLink` implement `__enter__`/`__exit__` for automatic resource cleanup.
 
-5. **Error handling**: libbpf functions return `-errno` directly (not -1 with errno set via C library). Use `abs(ret)` to extract the error code, not `ctypes.get_errno()`. See `_check_err()` in `_object.py` for the canonical pattern.
+5. **Error handling**: libbpf functions return `-errno` directly (not -1 with errno set via C library). Use `abs(ret)` to extract the error code, not `ctypes.get_errno()`. See `_check_err()` in `_types.py` for the canonical pattern.
 
 ### Test Requirements
 

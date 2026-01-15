@@ -10,26 +10,22 @@ Example:
 
 __version__ = "0.0.1"
 
+from tinybpf._buffers import BpfPerfBuffer, BpfRingBuffer
 from tinybpf._libbpf import init, libbpf_version
-from tinybpf._object import (
+from tinybpf._link import BpfLink
+from tinybpf._map import BpfMap, MapCollection
+from tinybpf._object import BpfObject, load
+from tinybpf._program import BpfProgram, ProgramCollection
+from tinybpf._types import (
     BPF_ANY,
     BPF_EXIST,
     BPF_NOEXIST,
     BpfError,
-    BpfLink,
-    BpfMap,
     BpfMapType,
-    BpfObject,
-    BpfPerfBuffer,
-    BpfProgram,
     BpfProgType,
-    BpfRingBuffer,
-    MapCollection,
     MapInfo,
-    ProgramCollection,
     ProgramInfo,
     RingBufferEvent,
-    load,
 )
 
 
