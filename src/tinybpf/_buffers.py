@@ -192,7 +192,7 @@ class BpfRingBuffer:
                         array_type = ctypes.c_char * size
                         array_ptr = ctypes.cast(data, ctypes.POINTER(array_type))
                         mv = memoryview(array_ptr.contents).cast("B")
-                        return callback(mv)
+                        return callback(mv)  # type: ignore[arg-type]
                     except BaseException as e:
                         self._stored_exception = e
                         return -1  # Stop polling

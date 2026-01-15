@@ -133,7 +133,7 @@ class BpfMap(Generic[KT, VT]):
         if self._key_type is int:
             return int.from_bytes(data, byteorder="little")  # type: ignore
         if issubclass(self._key_type, ctypes.Structure):
-            return self._key_type.from_buffer_copy(data)  # type: ignore[return-value]
+            return self._key_type.from_buffer_copy(data)
         return data  # type: ignore
 
     def _from_value_bytes(self, data: bytes) -> VT:
@@ -143,7 +143,7 @@ class BpfMap(Generic[KT, VT]):
         if self._value_type is int:
             return int.from_bytes(data, byteorder="little")  # type: ignore
         if issubclass(self._value_type, ctypes.Structure):
-            return self._value_type.from_buffer_copy(data)  # type: ignore[return-value]
+            return self._value_type.from_buffer_copy(data)
         return data  # type: ignore
 
     def lookup(self, key: KT) -> VT | None:
