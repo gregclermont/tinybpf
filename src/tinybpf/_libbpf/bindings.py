@@ -42,12 +42,19 @@ class _ring_buffer(ctypes.Structure):
     pass
 
 
+class _perf_buffer(ctypes.Structure):
+    """Opaque libbpf perf_buffer structure."""
+
+    pass
+
+
 # Pointer types
 bpf_object_p = ctypes.POINTER(_bpf_object)
 bpf_program_p = ctypes.POINTER(_bpf_program)
 bpf_map_p = ctypes.POINTER(_bpf_map)
 bpf_link_p = ctypes.POINTER(_bpf_link)
 ring_buffer_p = ctypes.POINTER(_ring_buffer)
+perf_buffer_p = ctypes.POINTER(_perf_buffer)
 
 # Callback type for ring buffer: int (*)(void *ctx, void *data, size_t size)
 RING_BUFFER_SAMPLE_FN = ctypes.CFUNCTYPE(
@@ -55,6 +62,22 @@ RING_BUFFER_SAMPLE_FN = ctypes.CFUNCTYPE(
     ctypes.c_void_p,  # ctx
     ctypes.c_void_p,  # data
     ctypes.c_size_t,  # size
+)
+
+# Callback types for perf buffer (note: return void, not int)
+PERF_BUFFER_SAMPLE_FN = ctypes.CFUNCTYPE(
+    None,  # return void
+    ctypes.c_void_p,  # ctx
+    ctypes.c_int,  # cpu
+    ctypes.c_void_p,  # data
+    ctypes.c_uint32,  # size
+)
+
+PERF_BUFFER_LOST_FN = ctypes.CFUNCTYPE(
+    None,  # return void
+    ctypes.c_void_p,  # ctx
+    ctypes.c_int,  # cpu
+    ctypes.c_uint64,  # lost_cnt
 )
 
 
@@ -187,6 +210,26 @@ def _setup_function_signatures(lib: ctypes.CDLL) -> None:
 
     lib.ring_buffer__free.argtypes = [ring_buffer_p]
     lib.ring_buffer__free.restype = None
+
+    # Perf buffer functions
+    lib.perf_buffer__new.argtypes = [
+        ctypes.c_int,  # map_fd
+        ctypes.c_size_t,  # page_cnt
+        PERF_BUFFER_SAMPLE_FN,  # sample_cb
+        PERF_BUFFER_LOST_FN,  # lost_cb
+        ctypes.c_void_p,  # ctx
+        ctypes.c_void_p,  # opts (NULL)
+    ]
+    lib.perf_buffer__new.restype = perf_buffer_p
+
+    lib.perf_buffer__poll.argtypes = [perf_buffer_p, ctypes.c_int]
+    lib.perf_buffer__poll.restype = ctypes.c_int
+
+    lib.perf_buffer__consume.argtypes = [perf_buffer_p]
+    lib.perf_buffer__consume.restype = ctypes.c_int
+
+    lib.perf_buffer__free.argtypes = [perf_buffer_p]
+    lib.perf_buffer__free.restype = None
 
 
 def init(libbpf_path: Union[str, Path, None] = None) -> None:

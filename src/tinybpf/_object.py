@@ -364,6 +364,170 @@ class BpfRingBuffer:
         return f"<BpfRingBuffer map='{self._map.name}' {status}>"
 
 
+class BpfPerfBuffer:
+    """Perf buffer consumer for BPF programs.
+
+    Perf buffers (BPF_MAP_TYPE_PERF_EVENT_ARRAY) are available on kernel 4.4+
+    and provide per-CPU event buffers with lost event tracking.
+
+    Example:
+        def handle_event(cpu: int, data: bytes) -> None:
+            print(f"CPU {cpu}: {len(data)} bytes")
+
+        def handle_lost(cpu: int, count: int) -> None:
+            print(f"CPU {cpu}: lost {count} events")
+
+        with tinybpf.load("trace.bpf.o") as obj:
+            with obj.program("trace").attach():
+                with BpfPerfBuffer(obj.map("events"), handle_event, handle_lost) as pb:
+                    pb.poll(timeout_ms=1000)
+    """
+
+    def __init__(
+        self,
+        map: "BpfMap[Any, Any]",
+        sample_callback: Callable[[int, bytes], None],
+        lost_callback: Callable[[int, int], None] | None = None,
+        page_count: int = 8,
+    ) -> None:
+        """Create perf buffer consumer.
+
+        Args:
+            map: Perf event array map (must be BPF_MAP_TYPE_PERF_EVENT_ARRAY).
+            sample_callback: Called with (cpu, data) for each event.
+            lost_callback: Called with (cpu, lost_count) when events are dropped.
+                          If None, lost events are silently ignored.
+            page_count: Per-CPU buffer size in pages (must be power of 2).
+
+        Raises:
+            BpfError: If map is not a perf event array type.
+            ValueError: If page_count is not a power of 2.
+        """
+        # Set _closed early so __del__ works if __init__ raises
+        self._closed = True
+
+        if map.type != BpfMapType.PERF_EVENT_ARRAY:
+            raise BpfError(
+                f"Map '{map.name}' is type {map.type.name}, expected PERF_EVENT_ARRAY"
+            )
+
+        if page_count <= 0 or (page_count & (page_count - 1)) != 0:
+            raise ValueError(f"page_count must be a power of 2, got {page_count}")
+
+        self._map = map
+        self._obj = map._obj  # For use-after-close detection
+        self._user_sample_callback = sample_callback
+        self._user_lost_callback = lost_callback
+        self._stored_exception: BaseException | None = None
+
+        # Create ctypes callback wrappers
+        def _sample_wrapper(ctx: Any, cpu: int, data: Any, size: int) -> None:
+            try:
+                event_data = ctypes.string_at(data, size)
+                self._user_sample_callback(cpu, event_data)
+            except BaseException as e:
+                self._stored_exception = e
+
+        def _lost_wrapper(ctx: Any, cpu: int, lost_cnt: int) -> None:
+            if self._user_lost_callback is not None:
+                try:
+                    self._user_lost_callback(cpu, lost_cnt)
+                except BaseException as e:
+                    if self._stored_exception is None:
+                        self._stored_exception = e
+
+        # Keep references to prevent garbage collection
+        self._sample_cb = bindings.PERF_BUFFER_SAMPLE_FN(_sample_wrapper)
+        self._lost_cb = bindings.PERF_BUFFER_LOST_FN(_lost_wrapper)
+
+        lib = bindings._get_lib()
+        self._ptr = lib.perf_buffer__new(
+            map.fd, page_count, self._sample_cb, self._lost_cb, None, None
+        )
+        _check_ptr(self._ptr, "perf_buffer__new")
+
+        # Mark as open only after successful initialization
+        self._closed = False
+
+    def _check_open(self) -> None:
+        """Raise if parent BpfObject is closed or perf buffer is closed."""
+        if self._closed:
+            raise BpfError("Perf buffer is closed")
+        if self._obj._closed:
+            raise BpfError("Cannot use perf buffer after BpfObject is closed")
+
+    def _check_and_reraise(self) -> None:
+        """Re-raise any exception stored from callback."""
+        if self._stored_exception is not None:
+            exc = self._stored_exception
+            self._stored_exception = None
+            raise exc
+
+    def poll(self, timeout_ms: int = -1) -> int:
+        """Poll for events from all CPUs.
+
+        Args:
+            timeout_ms: Timeout in milliseconds. -1 for infinite wait,
+                       0 for non-blocking.
+
+        Returns:
+            Number of events consumed.
+
+        Raises:
+            BpfError: On system error.
+            Any exception raised by the callbacks.
+        """
+        self._check_open()
+        lib = bindings._get_lib()
+        ret = lib.perf_buffer__poll(self._ptr, timeout_ms)
+        self._check_and_reraise()
+        _check_err(ret, "perf_buffer__poll")
+        return ret
+
+    def consume(self) -> int:
+        """Consume all available events without waiting.
+
+        Returns:
+            Number of events consumed.
+
+        Raises:
+            BpfError: On system error.
+            Any exception raised by the callbacks.
+        """
+        self._check_open()
+        lib = bindings._get_lib()
+        ret = lib.perf_buffer__consume(self._ptr)
+        self._check_and_reraise()
+        _check_err(ret, "perf_buffer__consume")
+        return ret
+
+    def close(self) -> None:
+        """Close perf buffer and free resources."""
+        if not self._closed:
+            lib = bindings._get_lib()
+            lib.perf_buffer__free(self._ptr)
+            self._closed = True
+
+    def __enter__(self) -> "BpfPerfBuffer":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: "TracebackType | None",
+    ) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        if not self._closed:
+            self.close()
+
+    def __repr__(self) -> str:
+        status = "closed" if self._closed else "open"
+        return f"<BpfPerfBuffer map='{self._map.name}' {status}>"
+
+
 class BpfProgram:
     """A BPF program within a loaded object.
 
