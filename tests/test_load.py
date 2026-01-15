@@ -430,15 +430,17 @@ class TestBpfRingBuffer:
         assert "closed" in repr(rb)
 
     def test_ringbuf_constructor_validation(self, ringbuf_bpf_path: Path) -> None:
-        """Only map or only callback raises ValueError."""
-        with tinybpf.load(ringbuf_bpf_path) as obj:
-            # Only map, no callback
-            with pytest.raises(ValueError, match="both be provided or both omitted"):
-                tinybpf.BpfRingBuffer(obj.map("events"))
+        """Callback without map raises ValueError."""
+        # Callback without map is invalid
+        with pytest.raises(ValueError, match="callback requires map"):
+            tinybpf.BpfRingBuffer(callback=lambda d: 0)
 
-            # Only callback, no map
-            with pytest.raises(ValueError, match="both be provided or both omitted"):
-                tinybpf.BpfRingBuffer(callback=lambda d: 0)
+    def test_ringbuf_iterator_mode(self, ringbuf_bpf_path: Path) -> None:
+        """Map without callback creates iterator mode ring buffer."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer(obj.map("events"))
+            assert "iterator" in repr(rb)
+            rb.close()
 
     def test_ringbuf_poll_without_maps(self) -> None:
         """Poll on empty ring buffer raises BpfError."""
@@ -533,6 +535,159 @@ class TestBpfRingBuffer:
                     os.getpid()  # Triggers events2
                     with pytest.raises(ValueError, match="test error from callback2"):
                         rb.poll(timeout_ms=100)
+
+    def test_ringbuf_epoll_fd(self, ringbuf_bpf_path: Path) -> None:
+        """epoll_fd() returns a valid file descriptor."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            fd = rb.epoll_fd()
+            assert isinstance(fd, int)
+            assert fd >= 0
+            # fileno() should return the same fd
+            assert rb.fileno() == fd
+            rb.close()
+
+    def test_ringbuf_epoll_fd_without_maps(self) -> None:
+        """epoll_fd() raises BpfError when no maps added."""
+        rb = tinybpf.BpfRingBuffer()
+        with pytest.raises(tinybpf.BpfError, match="No maps added"):
+            rb.epoll_fd()
+        rb.close()
+
+    def test_ringbuf_mode_in_repr(self, ringbuf_bpf_path: Path) -> None:
+        """Repr shows mode (callback or iterator)."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            # Callback mode
+            rb_cb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            assert "callback" in repr(rb_cb)
+            rb_cb.close()
+
+            # Iterator mode
+            rb_it = tinybpf.BpfRingBuffer(obj.map("events"))
+            assert "iterator" in repr(rb_it)
+            rb_it.close()
+
+    def test_ringbuf_mode_mixing_error(self, ringbuf_bpf_path: Path) -> None:
+        """Cannot mix callback and iterator modes."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            # Start with callback mode, try to add iterator mode
+            rb = tinybpf.BpfRingBuffer()
+            rb.add(obj.map("events"), lambda d: 0)
+            with pytest.raises(tinybpf.BpfError, match="Cannot mix callback and iterator"):
+                rb.add(obj.map("events2"))  # No callback = iterator mode
+            rb.close()
+
+            # Start with iterator mode, try to add callback mode
+            rb2 = tinybpf.BpfRingBuffer()
+            rb2.add(obj.map("events"))  # No callback = iterator mode
+            with pytest.raises(tinybpf.BpfError, match="Cannot mix callback and iterator"):
+                rb2.add(obj.map("events2"), lambda d: 0)
+            rb2.close()
+
+    def test_ringbuf_iterate_on_callback_mode_error(self, ringbuf_bpf_path: Path) -> None:
+        """Cannot iterate on callback-mode ring buffer."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            with pytest.raises(tinybpf.BpfError, match="Cannot iterate on callback-mode"):
+                iter(rb.__aiter__())  # Try to get async iterator
+            rb.close()
+
+
+class TestBpfRingBufferAsync:
+    """Async tests for ring buffer operations."""
+
+    @pytest.fixture
+    def ringbuf_bpf_path(self) -> Path:
+        """Path to compiled test_ringbuf.bpf.o test program."""
+        path = BPF_DIR / "test_ringbuf.bpf.o"
+        if not path.exists():
+            pytest.skip(f"Compiled BPF program not found: {path}")
+        return path
+
+    async def test_ringbuf_poll_async_callback(self, ringbuf_bpf_path: Path) -> None:
+        """poll_async() works with callback mode."""
+        import subprocess
+
+        events: list[bytes] = []
+
+        def callback(data: bytes) -> int:
+            events.append(data)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                async with tinybpf.BpfRingBuffer(obj.map("events"), callback) as rb:
+                    # Trigger event
+                    subprocess.run(["/bin/true"], check=True)
+                    await rb.poll_async(timeout_ms=100)
+
+        assert len(events) >= 1
+
+    async def test_ringbuf_poll_async_timeout(self, ringbuf_bpf_path: Path) -> None:
+        """poll_async() respects timeout."""
+        import time
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            # Don't attach program, so no events will come
+            rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            start = time.monotonic()
+            count = await rb.poll_async(timeout_ms=50)
+            elapsed = time.monotonic() - start
+
+            assert count == 0
+            assert elapsed < 0.2  # Should timeout quickly, not wait forever
+            rb.close()
+
+    async def test_ringbuf_poll_async_nonblocking(self, ringbuf_bpf_path: Path) -> None:
+        """poll_async(timeout_ms=0) is non-blocking."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            count = await rb.poll_async(timeout_ms=0)
+            assert count == 0
+            rb.close()
+
+    async def test_ringbuf_async_iterator(self, ringbuf_bpf_path: Path) -> None:
+        """Async iteration yields events."""
+        import asyncio
+        import subprocess
+
+        events: list[bytes] = []
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                # Iterator mode: no callback
+                rb = tinybpf.BpfRingBuffer(obj.map("events"))
+
+                async def collect_events() -> None:
+                    async for data in rb:
+                        events.append(data)
+                        if len(events) >= 1:
+                            break
+
+                async def trigger_events() -> None:
+                    await asyncio.sleep(0.01)
+                    subprocess.run(["/bin/true"], check=True)
+
+                # Run both concurrently with timeout
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(collect_events(), trigger_events()),
+                        timeout=2.0,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                finally:
+                    rb.close()
+
+        assert len(events) >= 1
+        assert len(events[0]) == 24  # pid + tid + comm
+
+    async def test_ringbuf_async_context_manager(self, ringbuf_bpf_path: Path) -> None:
+        """Ring buffer supports async context manager."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            async with tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0) as rb:
+                assert "open" in repr(rb)
+            assert "closed" in repr(rb)
 
 
 class TestBpfPerfBuffer:
