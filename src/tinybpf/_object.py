@@ -231,6 +231,11 @@ class BpfProgram:
     def __repr__(self) -> str:
         return f"<BpfProgram '{self._name}' type={self._type.name}>"
 
+    def _check_open(self) -> None:
+        """Raise if parent BpfObject is closed."""
+        if self._obj._closed:
+            raise BpfError("Cannot use program after BpfObject is closed")
+
     @property
     def name(self) -> str:
         """Return the program name."""
@@ -249,6 +254,7 @@ class BpfProgram:
     @property
     def fd(self) -> int:
         """Return the program file descriptor."""
+        self._check_open()
         lib = bindings._get_lib()
         return lib.bpf_program__fd(self._ptr)
 
@@ -266,6 +272,7 @@ class BpfProgram:
         Raises:
             BpfError: If attachment fails.
         """
+        self._check_open()
         lib = bindings._get_lib()
         link = lib.bpf_program__attach(self._ptr)
         _check_ptr(link, f"attach program '{self._name}'")
@@ -284,6 +291,7 @@ class BpfProgram:
         Raises:
             BpfError: If attachment fails.
         """
+        self._check_open()
         lib = bindings._get_lib()
         link = lib.bpf_program__attach_kprobe(
             self._ptr, retprobe, func_name.encode("utf-8")
@@ -319,6 +327,7 @@ class BpfProgram:
         Raises:
             BpfError: If attachment fails.
         """
+        self._check_open()
         lib = bindings._get_lib()
         link = lib.bpf_program__attach_tracepoint(
             self._ptr, category.encode("utf-8"), name.encode("utf-8")
@@ -338,6 +347,7 @@ class BpfProgram:
         Raises:
             BpfError: If attachment fails.
         """
+        self._check_open()
         lib = bindings._get_lib()
         link = lib.bpf_program__attach_raw_tracepoint(self._ptr, name.encode("utf-8"))
         _check_ptr(link, f"attach raw tracepoint to '{name}'")
@@ -364,6 +374,7 @@ class BpfProgram:
         Raises:
             BpfError: If attachment fails.
         """
+        self._check_open()
         lib = bindings._get_lib()
         link = lib.bpf_program__attach_uprobe(
             self._ptr, retprobe, pid, str(binary_path).encode("utf-8"), offset
@@ -454,6 +465,7 @@ class BpfMap(Generic[KT, VT]):
     @property
     def fd(self) -> int:
         """Return the map file descriptor."""
+        self._check_open()
         lib = bindings._get_lib()
         return lib.bpf_map__fd(self._ptr)
 
@@ -467,6 +479,11 @@ class BpfMap(Generic[KT, VT]):
             value_size=self._value_size,
             max_entries=self._max_entries,
         )
+
+    def _check_open(self) -> None:
+        """Raise if parent BpfObject is closed."""
+        if self._obj._closed:
+            raise BpfError("Cannot use map after BpfObject is closed")
 
     def _to_key_bytes(self, key: KT) -> bytes:
         """Convert key to bytes."""
@@ -525,6 +542,7 @@ class BpfMap(Generic[KT, VT]):
         Returns:
             The value if found, None otherwise.
         """
+        self._check_open()
         lib = bindings._get_lib()
         key_bytes = self._to_key_bytes(key)
         key_buf = ctypes.create_string_buffer(key_bytes, self._key_size)
@@ -554,6 +572,7 @@ class BpfMap(Generic[KT, VT]):
         Raises:
             BpfError: If update fails.
         """
+        self._check_open()
         lib = bindings._get_lib()
         key_bytes = self._to_key_bytes(key)
         value_bytes = self._to_value_bytes(value)
@@ -577,6 +596,7 @@ class BpfMap(Generic[KT, VT]):
         Returns:
             True if element was deleted, False if not found.
         """
+        self._check_open()
         lib = bindings._get_lib()
         key_bytes = self._to_key_bytes(key)
         key_buf = ctypes.create_string_buffer(key_bytes, self._key_size)
@@ -620,6 +640,7 @@ class BpfMap(Generic[KT, VT]):
         Yields:
             Each key in the map.
         """
+        self._check_open()
         lib = bindings._get_lib()
         prev_key: bytes | None = None
         next_key_buf = ctypes.create_string_buffer(self._key_size)

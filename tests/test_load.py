@@ -298,3 +298,30 @@ class TestErrorPaths:
                 # Clean up
                 for key in inserted_keys:
                     hash_map.delete(key)
+
+    def test_program_use_after_close(self, minimal_bpf_path: Path) -> None:
+        """Using program after BpfObject.close() should raise BpfError."""
+        obj = tinybpf.load(minimal_bpf_path)
+        prog = obj.programs["trace_openat"]
+        obj.close()
+
+        with pytest.raises(tinybpf.BpfError, match="closed"):
+            prog.attach()
+
+    def test_map_use_after_close(self, test_maps_bpf_path: Path) -> None:
+        """Using map after BpfObject.close() should raise BpfError."""
+        obj = tinybpf.load(test_maps_bpf_path)
+        hash_map = obj.map("pid_counts")
+        obj.close()
+
+        with pytest.raises(tinybpf.BpfError, match="closed"):
+            hash_map.lookup(b"\x00" * 4)
+
+    def test_map_iteration_after_close(self, test_maps_bpf_path: Path) -> None:
+        """Iterating map after BpfObject.close() should raise BpfError."""
+        obj = tinybpf.load(test_maps_bpf_path)
+        hash_map = obj.map("pid_counts")
+        obj.close()
+
+        with pytest.raises(tinybpf.BpfError, match="closed"):
+            list(hash_map.keys())
