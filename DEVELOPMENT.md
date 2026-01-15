@@ -6,6 +6,34 @@
 - [uv](https://docs.astral.sh/uv/) package manager
 - [gh](https://cli.github.com/) CLI (for workflow triggers)
 
+## Runtime Dependencies
+
+tinybpf bundles a pre-built `libbpf.so` for version consistency, but libbpf requires `libelf` at runtime.
+
+**On most Linux systems**, libelf is already installed (systemd depends on it). You can verify:
+
+```bash
+ldconfig -p | grep libelf
+```
+
+**If missing** (e.g., minimal containers):
+
+```bash
+# Ubuntu/Debian
+apt install libelf1
+
+# Fedora/RHEL
+dnf install elfutils-libelf
+
+# Alpine
+apk add libelf
+```
+
+**Why bundle libbpf but not libelf?**
+- System libbpf versions vary widely (Ubuntu 22.04 has 0.5.0, we need 1.4.0+)
+- libelf is stable, ubiquitous, and has minimal dependencies
+- Bundling libelf would also require bundling libzstd, liblzma, libbz2
+
 ## Local Development
 
 ### Run tests locally
