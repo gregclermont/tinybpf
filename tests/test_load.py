@@ -325,3 +325,98 @@ class TestErrorPaths:
 
         with pytest.raises(tinybpf.BpfError, match="closed"):
             list(hash_map.keys())
+
+
+class TestBpfRingBuffer:
+    """Tests for ring buffer operations."""
+
+    @pytest.fixture
+    def ringbuf_bpf_path(self) -> Path:
+        """Path to compiled test_ringbuf.bpf.o test program."""
+        path = BPF_DIR / "test_ringbuf.bpf.o"
+        if not path.exists():
+            pytest.skip(f"Compiled BPF program not found: {path}")
+        return path
+
+    def test_ringbuf_creation(self, ringbuf_bpf_path: Path) -> None:
+        """Can create ring buffer from ringbuf map."""
+        events: list[bytes] = []
+
+        def callback(data: bytes) -> int:
+            events.append(data)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer(obj.map("events"), callback)
+            assert "open" in repr(rb)
+            rb.close()
+            assert "closed" in repr(rb)
+
+    def test_ringbuf_wrong_map_type(self, test_maps_bpf_path: Path) -> None:
+        """Creating ring buffer from non-ringbuf map raises BpfError."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts")
+            with pytest.raises(tinybpf.BpfError, match="RINGBUF"):
+                tinybpf.BpfRingBuffer(hash_map, lambda d: 0)
+
+    def test_ringbuf_poll_events(self, ringbuf_bpf_path: Path) -> None:
+        """Can poll and receive events."""
+        import subprocess
+
+        events: list[bytes] = []
+
+        def callback(data: bytes) -> int:
+            events.append(data)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            prog = obj.program("trace_execve")
+            with prog.attach() as link:
+                with tinybpf.BpfRingBuffer(obj.map("events"), callback) as rb:
+                    # Trigger execve to generate event
+                    subprocess.run(["/bin/true"], check=True)
+                    rb.poll(timeout_ms=100)
+
+        assert len(events) >= 1
+        # Verify event structure (pid, tid, comm) = 4 + 4 + 16 = 24 bytes
+        assert len(events[0]) == 24
+
+    def test_ringbuf_callback_exception(self, ringbuf_bpf_path: Path) -> None:
+        """Exception in callback is propagated."""
+        import subprocess
+
+        def bad_callback(data: bytes) -> int:
+            raise ValueError("test error")
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            prog = obj.program("trace_execve")
+            with prog.attach() as link:
+                with tinybpf.BpfRingBuffer(obj.map("events"), bad_callback) as rb:
+                    subprocess.run(["/bin/true"], check=True)
+                    with pytest.raises(ValueError, match="test error"):
+                        rb.poll(timeout_ms=100)
+
+    def test_ringbuf_use_after_close(self, ringbuf_bpf_path: Path) -> None:
+        """Using ring buffer after close raises BpfError."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            rb.close()
+            with pytest.raises(tinybpf.BpfError, match="closed"):
+                rb.poll()
+
+    def test_ringbuf_use_after_object_close(self, ringbuf_bpf_path: Path) -> None:
+        """Using ring buffer after BpfObject close raises BpfError."""
+        obj = tinybpf.load(ringbuf_bpf_path)
+        rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+        obj.close()
+        with pytest.raises(tinybpf.BpfError, match="closed"):
+            rb.poll()
+        rb.close()
+
+    def test_ringbuf_context_manager(self, ringbuf_bpf_path: Path) -> None:
+        """Ring buffer supports context manager protocol."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0) as rb:
+                assert "open" in repr(rb)
+            # Ring buffer should be closed after with block
+            assert "closed" in repr(rb)

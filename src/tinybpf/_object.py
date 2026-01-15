@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     Generic,
     Iterator,
     Mapping,
@@ -212,6 +213,155 @@ class BpfLink:
         lib = bindings._get_lib()
         lib.bpf_link__destroy(self._ptr)
         self._destroyed = True
+
+
+class BpfRingBuffer:
+    """Ring buffer consumer for BPF programs.
+
+    Ring buffers (BPF_MAP_TYPE_RINGBUF, kernel 5.8+) are the modern
+    replacement for perf buffers, offering better performance and simpler
+    usage with a single shared buffer across all CPUs.
+
+    Example:
+        def handle_event(data: bytes) -> int:
+            print(f"Got {len(data)} bytes")
+            return 0  # Continue polling
+
+        with tinybpf.load("trace.bpf.o") as obj:
+            with obj.program("trace").attach():
+                with BpfRingBuffer(obj.map("events"), handle_event) as rb:
+                    rb.poll(timeout_ms=1000)
+    """
+
+    def __init__(
+        self,
+        map: "BpfMap[Any, Any]",
+        callback: Callable[[bytes], int],
+    ) -> None:
+        """Create ring buffer consumer.
+
+        Args:
+            map: Ring buffer map (must be BPF_MAP_TYPE_RINGBUF).
+            callback: Called with event data bytes. Return 0 to continue
+                     polling, non-zero to stop.
+
+        Raises:
+            BpfError: If map is not a ring buffer type.
+        """
+        # Set _closed early so __del__ works if __init__ raises
+        self._closed = True
+
+        if map.type != BpfMapType.RINGBUF:
+            raise BpfError(
+                f"Map '{map.name}' is type {map.type.name}, expected RINGBUF"
+            )
+
+        self._map = map
+        self._obj = map._obj  # For use-after-close detection
+        self._user_callback = callback
+        self._stored_exception: BaseException | None = None
+
+        # Create ctypes callback wrapper that catches exceptions
+        def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
+            try:
+                # Copy data to Python bytes
+                event_data = ctypes.string_at(data, size)
+                return self._user_callback(event_data)
+            except BaseException as e:
+                self._stored_exception = e
+                return -1  # Stop polling
+
+        # Keep reference to prevent garbage collection
+        self._callback = bindings.RING_BUFFER_SAMPLE_FN(_callback_wrapper)
+
+        lib = bindings._get_lib()
+        self._ptr = lib.ring_buffer__new(map.fd, self._callback, None, None)
+        _check_ptr(self._ptr, "ring_buffer__new")
+
+        # Mark as open only after successful initialization
+        self._closed = False
+
+    def _check_open(self) -> None:
+        """Raise if parent BpfObject is closed or ring buffer is closed."""
+        if self._closed:
+            raise BpfError("Ring buffer is closed")
+        if self._obj._closed:
+            raise BpfError("Cannot use ring buffer after BpfObject is closed")
+
+    def _check_and_reraise(self) -> None:
+        """Re-raise any exception stored from callback."""
+        if self._stored_exception is not None:
+            exc = self._stored_exception
+            self._stored_exception = None
+            raise exc
+
+    def poll(self, timeout_ms: int = -1) -> int:
+        """Poll for events.
+
+        Waits for events and calls the callback for each one received.
+
+        Args:
+            timeout_ms: Timeout in milliseconds. -1 for infinite wait,
+                       0 for non-blocking.
+
+        Returns:
+            Number of events consumed.
+
+        Raises:
+            BpfError: On system error.
+            Any exception raised by the callback.
+        """
+        self._check_open()
+        lib = bindings._get_lib()
+        ret = lib.ring_buffer__poll(self._ptr, timeout_ms)
+        self._check_and_reraise()
+        _check_err(ret, "ring_buffer__poll")
+        return ret
+
+    def consume(self) -> int:
+        """Consume all available events without waiting.
+
+        Processes all events currently in the ring buffer without blocking.
+
+        Returns:
+            Number of events consumed.
+
+        Raises:
+            BpfError: On system error.
+            Any exception raised by the callback.
+        """
+        self._check_open()
+        lib = bindings._get_lib()
+        ret = lib.ring_buffer__consume(self._ptr)
+        self._check_and_reraise()
+        _check_err(ret, "ring_buffer__consume")
+        return ret
+
+    def close(self) -> None:
+        """Close ring buffer and free resources."""
+        if not self._closed:
+            lib = bindings._get_lib()
+            lib.ring_buffer__free(self._ptr)
+            self._closed = True
+
+    def __enter__(self) -> "BpfRingBuffer":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: "TracebackType | None",
+    ) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        if not self._closed:
+            self.close()
+
+    def __repr__(self) -> str:
+        status = "closed" if self._closed else "open"
+        return f"<BpfRingBuffer map='{self._map.name}' {status}>"
 
 
 class BpfProgram:
