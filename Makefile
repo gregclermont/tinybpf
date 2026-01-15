@@ -30,7 +30,7 @@ setup-linux:
 		tar xz -C src/tinybpf/_libbpf/)
 
 test-linux: compile setup-linux
-	uv run --with pytest pytest tests/ -v
+	uv run --with pytest --with pytest-asyncio pytest tests/ -v
 
 #
 # macOS/Lima targets (run Linux targets inside Lima VM)
@@ -56,7 +56,7 @@ setup-lima:
 	limactl shell $(LIMA_VM) -- make -C $(PROJECT_DIR) setup-linux
 
 test-lima: compile setup-lima
-	limactl shell $(LIMA_VM) -- bash -c 'sudo $$HOME/.local/bin/uv run --project $(PROJECT_DIR) --with pytest pytest $(PROJECT_DIR)/tests -v'
+	limactl shell $(LIMA_VM) -- bash -c 'sudo $$HOME/.local/bin/uv run --project $(PROJECT_DIR) --with pytest --with pytest-asyncio pytest $(PROJECT_DIR)/tests -v'
 
 #
 # Auto-detect OS and dispatch to appropriate target
