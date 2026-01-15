@@ -146,6 +146,18 @@ class ProgramInfo:
     type: BpfProgType
 
 
+@dataclass(frozen=True)
+class RingBufferEvent:
+    """Event from a ring buffer with source map information.
+
+    Used with BpfRingBuffer.events() for multi-map ring buffers where
+    you need to identify which map each event came from.
+    """
+
+    map_name: str
+    data: bytes
+
+
 def _check_ptr(ptr: Any, operation: str) -> None:
     """Check if a libbpf pointer return value indicates an error."""
     lib = bindings._get_lib()
@@ -282,8 +294,8 @@ class BpfRingBuffer:
         # Mode tracking: None until first add, then "callback" or "iterator"
         self._mode: str | None = None
 
-        # Event queue for iterator mode
-        self._event_queue: deque[bytes] = deque()
+        # Event queue for iterator mode: (map_name, data) tuples
+        self._event_queue: deque[tuple[str, bytes]] = deque()
 
         self._closed = False
 
@@ -336,11 +348,13 @@ class BpfRingBuffer:
                     self._stored_exception = e
                     return -1  # Stop polling
         else:
-            # Iterator mode: queue events
+            # Iterator mode: queue events with map name
+            map_name = map.name  # Capture in closure
+
             def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
                 try:
                     event_data = ctypes.string_at(data, size)
-                    self._event_queue.append(event_data)
+                    self._event_queue.append((map_name, event_data))
                     return 0  # Continue
                 except BaseException as e:
                     self._stored_exception = e
@@ -528,6 +542,38 @@ class BpfRingBuffer:
             raise BpfError("No maps added to ring buffer")
         return _AsyncRingBufferIterator(self)
 
+    def events(self) -> "_TaggedRingBufferIterator":
+        """Return async iterator yielding tagged events.
+
+        Each event includes the source map name, useful for multi-map
+        ring buffers where you need to identify which map each event
+        came from.
+
+        Returns:
+            Async iterator yielding RingBufferEvent objects.
+
+        Raises:
+            BpfError: If in callback mode or no maps added.
+
+        Example:
+            rb = BpfRingBuffer()
+            rb.add(obj.map("events1"))
+            rb.add(obj.map("events2"))
+            async for event in rb.events():
+                if event.map_name == "events1":
+                    handle_type1(event.data)
+                else:
+                    handle_type2(event.data)
+        """
+        if self._mode == "callback":
+            raise BpfError(
+                "Cannot iterate on callback-mode ring buffer; "
+                "events are delivered to callbacks during poll()"
+            )
+        if self._ptr is None:
+            raise BpfError("No maps added to ring buffer")
+        return _TaggedRingBufferIterator(self)
+
     def close(self) -> None:
         """Close ring buffer and free resources."""
         if not self._closed:
@@ -590,9 +636,10 @@ class _AsyncRingBufferIterator:
         # Check if ring buffer is still valid
         rb._check_open()
 
-        # Return queued event if available
+        # Return queued event if available (discard map_name for backward compat)
         if rb._event_queue:
-            return rb._event_queue.popleft()
+            _map_name, data = rb._event_queue.popleft()
+            return data
 
         # Wait for events
         while True:
@@ -600,7 +647,42 @@ class _AsyncRingBufferIterator:
 
             # Check for events after poll
             if rb._event_queue:
-                return rb._event_queue.popleft()
+                _map_name, data = rb._event_queue.popleft()
+                return data
+
+            # poll_async returned 0 events, could be spurious wakeup
+            # Continue waiting
+
+
+class _TaggedRingBufferIterator:
+    """Async iterator yielding tagged RingBufferEvent objects."""
+
+    def __init__(self, rb: BpfRingBuffer) -> None:
+        self._rb = rb
+
+    def __aiter__(self) -> "_TaggedRingBufferIterator":
+        return self
+
+    async def __anext__(self) -> RingBufferEvent:
+        """Get next tagged event, waiting if necessary."""
+        rb = self._rb
+
+        # Check if ring buffer is still valid
+        rb._check_open()
+
+        # Return queued event if available
+        if rb._event_queue:
+            map_name, data = rb._event_queue.popleft()
+            return RingBufferEvent(map_name=map_name, data=data)
+
+        # Wait for events
+        while True:
+            await rb.poll_async(timeout_ms=-1)
+
+            # Check for events after poll
+            if rb._event_queue:
+                map_name, data = rb._event_queue.popleft()
+                return RingBufferEvent(map_name=map_name, data=data)
 
             # poll_async returned 0 events, could be spurious wakeup
             # Continue waiting
