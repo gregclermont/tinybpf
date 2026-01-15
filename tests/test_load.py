@@ -251,3 +251,50 @@ class TestKprobeAttachment:
             assert link.fd >= 0
             assert "kretprobe" in repr(link)
             link.destroy()
+
+
+class TestErrorPaths:
+    """Tests for error handling and edge cases."""
+
+    def test_attach_nonexistent_function(self, minimal_bpf_path: Path) -> None:
+        """Attaching to non-existent kernel function should raise BpfError."""
+        with tinybpf.load(minimal_bpf_path) as obj:
+            prog = obj.programs["trace_openat"]
+            with pytest.raises(tinybpf.BpfError):
+                prog.attach_kprobe("this_function_does_not_exist_xyz123")
+
+    def test_empty_map_iteration(self, test_maps_bpf_path: Path) -> None:
+        """Iterating an empty map should yield nothing."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts")
+            # Ensure map is empty (delete any existing keys)
+            for key in list(hash_map.keys()):
+                hash_map.delete(key)
+            # Verify iteration yields nothing
+            assert list(hash_map.keys()) == []
+            assert list(hash_map.values()) == []
+            assert list(hash_map.items()) == []
+
+    def test_map_update_exceeds_max_entries(self, test_maps_bpf_path: Path) -> None:
+        """Exceeding map max_entries should raise BpfError."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts")
+            max_entries = hash_map.max_entries
+
+            # Fill the map to capacity
+            inserted_keys = []
+            for i in range(max_entries):
+                key = (i + 100000).to_bytes(4, "little")
+                value = (i).to_bytes(8, "little")
+                hash_map.update(key, value, tinybpf.BPF_NOEXIST)
+                inserted_keys.append(key)
+
+            try:
+                # Try to insert one more - should fail
+                overflow_key = (max_entries + 100000).to_bytes(4, "little")
+                with pytest.raises(tinybpf.BpfError):
+                    hash_map.update(overflow_key, b"\x00" * 8, tinybpf.BPF_NOEXIST)
+            finally:
+                # Clean up
+                for key in inserted_keys:
+                    hash_map.delete(key)

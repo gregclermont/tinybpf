@@ -1,5 +1,8 @@
 """Test tinybpf API structure and imports."""
 
+import os
+import tempfile
+
 import tinybpf
 
 
@@ -89,3 +92,32 @@ def test_program_info_dataclass():
 
     field_names = {f.name for f in fields(tinybpf.ProgramInfo)}
     assert field_names == {"name", "section", "type"}
+
+
+def test_load_invalid_elf():
+    """Loading a non-ELF file should raise BpfError."""
+    import pytest
+
+    with tempfile.NamedTemporaryFile(suffix=".bpf.o", delete=False) as f:
+        f.write(b"not an elf file")
+        f.flush()
+        try:
+            with pytest.raises(tinybpf.BpfError):
+                tinybpf.load(f.name)
+        finally:
+            os.unlink(f.name)
+
+
+def test_load_truncated_elf():
+    """Loading a truncated ELF should raise BpfError."""
+    import pytest
+
+    # ELF magic header but truncated
+    with tempfile.NamedTemporaryFile(suffix=".bpf.o", delete=False) as f:
+        f.write(b"\x7fELF\x02\x01\x01")  # Partial ELF header
+        f.flush()
+        try:
+            with pytest.raises(tinybpf.BpfError):
+                tinybpf.load(f.name)
+        finally:
+            os.unlink(f.name)
