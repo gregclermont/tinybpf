@@ -265,7 +265,8 @@ class BpfRingBuffer:
     def __init__(
         self,
         map: "BpfMap[Any, Any] | None" = None,
-        callback: Callable[[bytes], int] | None = None,
+        callback: Callable[[bytes], int] | Callable[[memoryview], int] | None = None,
+        zero_copy: bool = False,
     ) -> None:
         """Create ring buffer consumer.
 
@@ -274,9 +275,13 @@ class BpfRingBuffer:
             callback: Optional callback for the map's events. Return 0 to
                      continue polling, non-zero to stop. If None, use
                      async iteration to consume events.
+            zero_copy: If True, callback receives memoryview instead of bytes.
+                      WARNING: The memoryview is only valid during the callback.
+                      If you need to store the data, copy it: stored = bytes(data)
 
         Raises:
             ValueError: If callback is provided without map.
+            BpfError: If zero_copy=True without callback.
         """
         # Set _closed early so __del__ works if __init__ raises
         self._closed = True
@@ -284,6 +289,10 @@ class BpfRingBuffer:
         # Validate: can't have callback without map
         if callback is not None and map is None:
             raise ValueError("callback requires map")
+
+        # Validate: zero_copy requires callback
+        if zero_copy and callback is None:
+            raise BpfError("zero_copy=True requires a callback")
 
         self._ptr: Any = None  # Lazy init on first add()
         self._maps: list[BpfMap[Any, Any]] = []
@@ -294,18 +303,23 @@ class BpfRingBuffer:
         # Mode tracking: None until first add, then "callback" or "iterator"
         self._mode: str | None = None
 
+        # Zero-copy mode tracking
+        self._zero_copy = zero_copy
+        self._zero_copy_mode: bool | None = None  # Track consistency across add() calls
+
         # Event queue for iterator mode: (map_name, data) tuples
         self._event_queue: deque[tuple[str, bytes]] = deque()
 
         self._closed = False
 
         if map is not None:
-            self.add(map, callback)
+            self.add(map, callback, zero_copy=zero_copy)
 
     def add(
         self,
         map: "BpfMap[Any, Any]",
-        callback: Callable[[bytes], int] | None = None,
+        callback: Callable[[bytes], int] | Callable[[memoryview], int] | None = None,
+        zero_copy: bool | None = None,
     ) -> None:
         """Add a ring buffer map to this consumer.
 
@@ -313,6 +327,9 @@ class BpfRingBuffer:
             map: Ring buffer map (must be BPF_MAP_TYPE_RINGBUF).
             callback: Event handler. Return 0 to continue polling, non-zero
                      to stop. If None, events are consumed via async iteration.
+            zero_copy: If True, callback receives memoryview instead of bytes.
+                      If None, uses the instance default from constructor.
+                      WARNING: memoryview is only valid during the callback.
 
         Raises:
             BpfError: If ring buffer is closed, map type is wrong,
@@ -328,7 +345,22 @@ class BpfRingBuffer:
         if map in self._maps:
             raise BpfError(f"Map '{map.name}' already added to this ring buffer")
 
-        # Determine and validate mode
+        # Determine zero_copy mode (use instance default if not specified)
+        use_zero_copy = zero_copy if zero_copy is not None else self._zero_copy
+
+        # Zero-copy requires callback mode
+        if use_zero_copy and callback is None:
+            raise BpfError("zero_copy=True requires a callback")
+
+        # Validate zero_copy mode consistency
+        if self._zero_copy_mode is not None and self._zero_copy_mode != use_zero_copy:
+            raise BpfError(
+                f"Cannot mix zero_copy and copy modes; "
+                f"ring buffer is in {'zero_copy' if self._zero_copy_mode else 'copy'} mode"
+            )
+        self._zero_copy_mode = use_zero_copy
+
+        # Determine and validate callback/iterator mode
         new_mode = "callback" if callback is not None else "iterator"
         if self._mode is not None and self._mode != new_mode:
             raise BpfError(
@@ -339,14 +371,29 @@ class BpfRingBuffer:
 
         # Create ctypes callback wrapper
         if callback is not None:
-            # Callback mode: call user callback
-            def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
-                try:
-                    event_data = ctypes.string_at(data, size)
-                    return callback(event_data)
-                except BaseException as e:
-                    self._stored_exception = e
-                    return -1  # Stop polling
+            if use_zero_copy:
+                # Zero-copy mode: pass memoryview to callback
+                def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
+                    try:
+                        # Create memoryview without copying
+                        # Use c_char to get valid memoryview, then cast to 'B' for
+                        # bytes-like interface (indexing returns int, not bytes)
+                        array_type = ctypes.c_char * size
+                        array_ptr = ctypes.cast(data, ctypes.POINTER(array_type))
+                        mv = memoryview(array_ptr.contents).cast("B")
+                        return callback(mv)
+                    except BaseException as e:
+                        self._stored_exception = e
+                        return -1  # Stop polling
+            else:
+                # Copy mode: pass bytes to callback
+                def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
+                    try:
+                        event_data = ctypes.string_at(data, size)
+                        return callback(event_data)
+                    except BaseException as e:
+                        self._stored_exception = e
+                        return -1  # Stop polling
         else:
             # Iterator mode: queue events with map name
             map_name = map.name  # Capture in closure

@@ -592,6 +592,80 @@ class TestBpfRingBuffer:
                 iter(rb.__aiter__())  # Try to get async iterator
             rb.close()
 
+    def test_ringbuf_zero_copy_callback(self, ringbuf_bpf_path: Path) -> None:
+        """Zero-copy mode provides memoryview to callback."""
+        import subprocess
+
+        received_types: list[type] = []
+        received_lengths: list[int] = []
+
+        def callback(data: memoryview) -> int:
+            received_types.append(type(data))
+            received_lengths.append(len(data))
+            # Can access data without copying
+            assert isinstance(data, memoryview)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.map("events"), callback, zero_copy=True)
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+                rb.close()
+
+        assert len(received_types) >= 1
+        assert all(t is memoryview for t in received_types)
+        assert all(length == 24 for length in received_lengths)  # pid + tid + comm
+
+    def test_ringbuf_zero_copy_filter(self, ringbuf_bpf_path: Path) -> None:
+        """Zero-copy mode allows inspection without copying."""
+        import subprocess
+
+        inspected_count = [0]
+        copied_count = [0]
+
+        def callback(data: memoryview) -> int:
+            inspected_count[0] += 1
+            # Inspect first byte without copying
+            first_byte = data[0]
+            # Only copy if we decide to keep (simulate filtering)
+            if first_byte != 0:
+                _ = bytes(data)  # Copy only when needed
+                copied_count[0] += 1
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.map("events"), callback, zero_copy=True)
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+                rb.close()
+
+        assert inspected_count[0] >= 1
+
+    def test_ringbuf_zero_copy_requires_callback(self, ringbuf_bpf_path: Path) -> None:
+        """zero_copy=True requires callback mode."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with pytest.raises(tinybpf.BpfError, match="requires a callback"):
+                tinybpf.BpfRingBuffer(obj.map("events"), zero_copy=True)
+
+    def test_ringbuf_zero_copy_add_requires_callback(self, ringbuf_bpf_path: Path) -> None:
+        """zero_copy=True on add() requires callback."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer()
+            with pytest.raises(tinybpf.BpfError, match="requires a callback"):
+                rb.add(obj.map("events"), zero_copy=True)
+            rb.close()
+
+    def test_ringbuf_zero_copy_mode_mixing_error(self, ringbuf_bpf_path: Path) -> None:
+        """Cannot mix zero_copy and copy modes in same ring buffer."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer()
+            rb.add(obj.map("events"), lambda d: 0, zero_copy=True)
+            with pytest.raises(tinybpf.BpfError, match="Cannot mix zero_copy and copy"):
+                rb.add(obj.map("events2"), lambda d: 0, zero_copy=False)
+            rb.close()
+
 
 class TestBpfRingBufferAsync:
     """Async tests for ring buffer operations."""
