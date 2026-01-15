@@ -10,6 +10,7 @@ This module contains foundational types used throughout tinybpf:
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
@@ -104,6 +105,28 @@ class BpfProgType(IntEnum):
 BPF_ANY = 0  # Create new or update existing
 BPF_NOEXIST = 1  # Create new only if it doesn't exist
 BPF_EXIST = 2  # Update existing only
+
+# BPF object name length (from kernel)
+BPF_OBJ_NAME_LEN = 16
+
+
+class _BpfMapInfoKernel(ctypes.Structure):
+    """Kernel bpf_map_info structure for bpf_obj_get_info_by_fd.
+
+    This is a subset of the full struct - only fields we need.
+    The kernel will fill in what it knows and ignore extra space.
+    """
+
+    _fields_ = [  # noqa: RUF012 (required by ctypes.Structure)
+        ("type", ctypes.c_uint32),
+        ("id", ctypes.c_uint32),
+        ("key_size", ctypes.c_uint32),
+        ("value_size", ctypes.c_uint32),
+        ("max_entries", ctypes.c_uint32),
+        ("map_flags", ctypes.c_uint32),
+        ("name", ctypes.c_char * BPF_OBJ_NAME_LEN),
+        # Additional fields exist but aren't needed for basic functionality
+    ]
 
 
 @dataclass(frozen=True)

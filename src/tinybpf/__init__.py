@@ -13,7 +13,7 @@ __version__ = "0.0.1"
 from tinybpf._buffers import BpfPerfBuffer, BpfRingBuffer
 from tinybpf._libbpf import init, libbpf_version
 from tinybpf._link import BpfLink
-from tinybpf._map import BpfMap, MapCollection
+from tinybpf._map import BpfMap, MapCollection, open_pinned_map
 from tinybpf._object import BpfObject, load
 from tinybpf._program import BpfProgram, ProgramCollection
 from tinybpf._types import (
@@ -41,6 +41,7 @@ __all__ = [
     "libbpf_version",
     # Main API
     "load",
+    "open_pinned_map",
     # Classes
     "BpfObject",
     "BpfProgram",

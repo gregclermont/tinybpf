@@ -184,6 +184,25 @@ def _setup_function_signatures(lib: ctypes.CDLL) -> None:
     lib.bpf_map_get_next_key.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
     lib.bpf_map_get_next_key.restype = ctypes.c_int
 
+    # Map pinning
+    lib.bpf_map__pin.argtypes = [bpf_map_p, ctypes.c_char_p]
+    lib.bpf_map__pin.restype = ctypes.c_int
+
+    lib.bpf_map__unpin.argtypes = [bpf_map_p, ctypes.c_char_p]
+    lib.bpf_map__unpin.restype = ctypes.c_int
+
+    # Open pinned BPF object (returns fd)
+    lib.bpf_obj_get.argtypes = [ctypes.c_char_p]
+    lib.bpf_obj_get.restype = ctypes.c_int
+
+    # Get BPF object info by fd (works for maps, programs, etc.)
+    lib.bpf_obj_get_info_by_fd.argtypes = [
+        ctypes.c_int,  # fd
+        ctypes.c_void_p,  # info struct
+        ctypes.POINTER(ctypes.c_uint32),  # info_len
+    ]
+    lib.bpf_obj_get_info_by_fd.restype = ctypes.c_int
+
     # Error handling
     lib.libbpf_strerror.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
     lib.libbpf_strerror.restype = ctypes.c_int
