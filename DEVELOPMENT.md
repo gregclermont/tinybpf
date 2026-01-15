@@ -84,11 +84,37 @@ Linting and type checking:
 | `make format` | Run ruff formatter |
 | `make typecheck` | Run mypy type checker |
 
-Pre-commit hooks (optional, CI enforces the same checks):
+### Pre-commit hooks
+
+Pre-commit hooks run the same checks as CI. Install them to catch issues before pushing:
 
 ```bash
 uv sync --extra dev
 uv run pre-commit install
+```
+
+### Validating changes before pushing
+
+**Always run pre-commit before pushing** to avoid CI failures:
+
+```bash
+# Run all checks (same as CI)
+uv run pre-commit run --all-files
+```
+
+This runs:
+- `ruff` - linting and auto-fixes
+- `ruff-format` - code formatting
+- `mypy` - type checking
+
+The pre-commit hooks use `uv run mypy` to ensure the same mypy version as CI. This avoids version mismatches that can cause different errors locally vs in CI.
+
+**Quick individual checks** (useful during development):
+
+```bash
+uv run ruff check src/ tests/     # Lint only
+uv run ruff format src/ tests/    # Format only
+uv run mypy                       # Type check only
 ```
 
 ### Build wheel locally
