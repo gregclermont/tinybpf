@@ -272,9 +272,15 @@ class BpfRingBuffer:
 
         Args:
             map: Optional ring buffer map to add initially.
-            callback: Optional callback for the map's events. Return 0 to
-                     continue polling, non-zero to stop. If None, use
-                     async iteration to consume events.
+            callback: Event handler for map's events. Return 0 to continue
+                     polling, non-zero to stop. If None, use iteration to
+                     consume events.
+
+                     Callbacks are invoked synchronously during poll();
+                     long-running callbacks can cause the kernel buffer to fill
+                     and silently drop events. For heavy processing, use iterator
+                     mode instead (omit callback) to automatically queue events
+                     for processing after poll returns.
             as_memoryview: If True, callback receives memoryview instead of bytes,
                      providing zero-copy access to the ring buffer memory.
 
@@ -339,7 +345,8 @@ class BpfRingBuffer:
         Args:
             map: Ring buffer map (must be BPF_MAP_TYPE_RINGBUF).
             callback: Event handler. Return 0 to continue polling, non-zero
-                     to stop. If None, events are consumed via async iteration.
+                     to stop. If None, events are consumed via iteration.
+                     See __init__ docstring for timing considerations.
             as_memoryview: If True, callback receives memoryview instead of bytes.
                      If None, uses the instance default from constructor.
                      See __init__ docstring for full details on when this helps.
@@ -808,6 +815,10 @@ class BpfPerfBuffer:
         Args:
             map: Perf event array map (must be BPF_MAP_TYPE_PERF_EVENT_ARRAY).
             sample_callback: Called with (cpu, data) for each event.
+                     Callbacks are invoked synchronously during poll();
+                     long-running callbacks can cause events to be lost. For
+                     heavy processing, append to a collections.deque and process
+                     in a separate thread or after polling completes.
             lost_callback: Called with (cpu, lost_count) when events are dropped.
                           If None, lost events are silently ignored.
             page_count: Per-CPU buffer size in pages (must be power of 2).
