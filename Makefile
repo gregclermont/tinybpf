@@ -7,6 +7,7 @@
 #
 # macOS-only:
 #   make lima-create   # One-time VM setup
+#   make lima-shell    # Shell into VM at project dir
 #   make lima-delete   # Remove VM
 
 UNAME := $(shell uname)
@@ -46,6 +47,9 @@ lima-create:
 lima-delete:
 	limactl delete -f $(LIMA_VM)
 
+lima-shell:
+	limactl shell $(LIMA_VM) --workdir $(PROJECT_DIR)
+
 setup-lima:
 	@limactl shell $(LIMA_VM) -- which make > /dev/null || \
 		(echo "Installing make..." && limactl shell $(LIMA_VM) -- sudo apt-get update -qq && limactl shell $(LIMA_VM) -- sudo apt-get install -qq -y make)
@@ -69,4 +73,4 @@ endif
 clean:
 	rm -f tests/bpf/*.bpf.o
 
-.PHONY: compile setup-linux test-linux lima-create lima-delete setup-lima test-lima setup test clean
+.PHONY: compile setup-linux test-linux lima-create lima-delete lima-shell setup-lima test-lima setup test clean
