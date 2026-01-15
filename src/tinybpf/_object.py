@@ -12,8 +12,10 @@ Example:
 
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import errno
+from collections import deque
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -222,23 +224,30 @@ class BpfRingBuffer:
     replacement for perf buffers, offering better performance and simpler
     usage with a single shared buffer across all CPUs.
 
-    Supports consuming from multiple ring buffer maps with a single poll().
+    Supports two consumption modes:
 
-    Example (single map):
-        def handle_event(data: bytes) -> int:
-            print(f"Got {len(data)} bytes")
-            return 0  # Continue polling
+    **Callback mode**: Pass callbacks to handle events during poll().
+        rb = BpfRingBuffer(obj.map("events"), handle_event)
+        rb.poll()  # Callbacks invoked
 
-        with tinybpf.load("trace.bpf.o") as obj:
-            with obj.program("trace").attach():
-                with BpfRingBuffer(obj.map("events"), handle_event) as rb:
-                    rb.poll(timeout_ms=1000)
+    **Iterator mode**: Use async iteration to consume events.
+        rb = BpfRingBuffer(obj.map("events"))
+        async for data in rb:
+            handle(data)
 
-    Example (multiple maps):
+    Supports multiple maps in both modes:
         rb = BpfRingBuffer()
-        rb.add(obj.map("events1"), callback1)
-        rb.add(obj.map("events2"), callback2)
-        rb.poll()  # Polls all maps with single epoll
+        rb.add(map1, callback1)  # Callback mode
+        rb.add(map2, callback2)
+        rb.poll()
+
+        rb = BpfRingBuffer()
+        rb.add(map1)  # Iterator mode
+        rb.add(map2)
+        async for data in rb:  # Events from all maps
+            ...
+
+    Modes cannot be mixed - all maps must use callbacks or none.
     """
 
     def __init__(
@@ -249,19 +258,20 @@ class BpfRingBuffer:
         """Create ring buffer consumer.
 
         Args:
-            map: Optional ring buffer map. If provided, callback must also
-                 be provided.
+            map: Optional ring buffer map to add initially.
             callback: Optional callback for the map's events. Return 0 to
-                     continue polling, non-zero to stop.
+                     continue polling, non-zero to stop. If None, use
+                     async iteration to consume events.
 
         Raises:
-            ValueError: If only one of map/callback is provided.
+            ValueError: If callback is provided without map.
         """
         # Set _closed early so __del__ works if __init__ raises
         self._closed = True
 
-        if (map is None) != (callback is None):
-            raise ValueError("map and callback must both be provided or both omitted")
+        # Validate: can't have callback without map
+        if callback is not None and map is None:
+            raise ValueError("callback requires map")
 
         self._ptr: Any = None  # Lazy init on first add()
         self._maps: list[BpfMap[Any, Any]] = []
@@ -269,26 +279,32 @@ class BpfRingBuffer:
         self._callbacks: list[Any] = []  # Keep ctypes callbacks alive
         self._stored_exception: BaseException | None = None
 
+        # Mode tracking: None until first add, then "callback" or "iterator"
+        self._mode: str | None = None
+
+        # Event queue for iterator mode
+        self._event_queue: deque[bytes] = deque()
+
         self._closed = False
 
         if map is not None:
-            self.add(map, callback)  # type: ignore[arg-type]
+            self.add(map, callback)
 
     def add(
         self,
         map: "BpfMap[Any, Any]",
-        callback: Callable[[bytes], int],
+        callback: Callable[[bytes], int] | None = None,
     ) -> None:
         """Add a ring buffer map to this consumer.
 
         Args:
             map: Ring buffer map (must be BPF_MAP_TYPE_RINGBUF).
-            callback: Called with event data bytes. Return 0 to continue
-                     polling, non-zero to stop.
+            callback: Event handler. Return 0 to continue polling, non-zero
+                     to stop. If None, events are consumed via async iteration.
 
         Raises:
             BpfError: If ring buffer is closed, map type is wrong,
-                     map already added, or libbpf call fails.
+                     map already added, modes are mixed, or libbpf call fails.
         """
         self._check_open()
 
@@ -300,14 +316,35 @@ class BpfRingBuffer:
         if map in self._maps:
             raise BpfError(f"Map '{map.name}' already added to this ring buffer")
 
-        # Create ctypes callback wrapper that catches exceptions
-        def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
-            try:
-                event_data = ctypes.string_at(data, size)
-                return callback(event_data)
-            except BaseException as e:
-                self._stored_exception = e
-                return -1  # Stop polling
+        # Determine and validate mode
+        new_mode = "callback" if callback is not None else "iterator"
+        if self._mode is not None and self._mode != new_mode:
+            raise BpfError(
+                f"Cannot mix callback and iterator modes; "
+                f"ring buffer is in {self._mode} mode"
+            )
+        self._mode = new_mode
+
+        # Create ctypes callback wrapper
+        if callback is not None:
+            # Callback mode: call user callback
+            def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
+                try:
+                    event_data = ctypes.string_at(data, size)
+                    return callback(event_data)
+                except BaseException as e:
+                    self._stored_exception = e
+                    return -1  # Stop polling
+        else:
+            # Iterator mode: queue events
+            def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
+                try:
+                    event_data = ctypes.string_at(data, size)
+                    self._event_queue.append(event_data)
+                    return 0  # Continue
+                except BaseException as e:
+                    self._stored_exception = e
+                    return -1
 
         cb = bindings.RING_BUFFER_SAMPLE_FN(_callback_wrapper)
         lib = bindings._get_lib()
@@ -341,10 +378,37 @@ class BpfRingBuffer:
             self._stored_exception = None
             raise exc
 
-    def poll(self, timeout_ms: int = -1) -> int:
-        """Poll for events.
+    def epoll_fd(self) -> int:
+        """Return the epoll file descriptor for this ring buffer.
 
-        Waits for events and calls the callback for each one received.
+        This fd becomes readable when events are available. Can be used
+        for custom event loop integration.
+
+        Returns:
+            File descriptor for epoll-based waiting.
+
+        Raises:
+            BpfError: If no maps have been added.
+        """
+        self._check_open()
+        if self._ptr is None:
+            raise BpfError("No maps added to ring buffer")
+        lib = bindings._get_lib()
+        return lib.ring_buffer__epoll_fd(self._ptr)
+
+    def fileno(self) -> int:
+        """Return file descriptor for select/poll integration.
+
+        Alias for epoll_fd(), provided for compatibility with Python's
+        file-like object protocol.
+        """
+        return self.epoll_fd()
+
+    def poll(self, timeout_ms: int = -1) -> int:
+        """Poll for events (blocking).
+
+        Waits for events and processes them. In callback mode, callbacks
+        are invoked. In iterator mode, events are queued for async iteration.
 
         Args:
             timeout_ms: Timeout in milliseconds. -1 for infinite wait,
@@ -355,7 +419,7 @@ class BpfRingBuffer:
 
         Raises:
             BpfError: On system error or if no maps have been added.
-            Any exception raised by the callbacks.
+            Any exception raised by callbacks.
         """
         self._check_open()
         if self._ptr is None:
@@ -376,7 +440,7 @@ class BpfRingBuffer:
 
         Raises:
             BpfError: On system error or if no maps have been added.
-            Any exception raised by the callbacks.
+            Any exception raised by callbacks.
         """
         self._check_open()
         if self._ptr is None:
@@ -386,6 +450,83 @@ class BpfRingBuffer:
         self._check_and_reraise()
         _check_err(ret, "ring_buffer__consume")
         return ret
+
+    async def poll_async(self, timeout_ms: int = -1) -> int:
+        """Poll for events asynchronously.
+
+        Waits for events using asyncio event loop integration. In callback
+        mode, callbacks are invoked when events arrive. In iterator mode,
+        events are queued for async iteration.
+
+        Args:
+            timeout_ms: Timeout in milliseconds. -1 for infinite wait,
+                       0 for non-blocking.
+
+        Returns:
+            Number of events consumed.
+
+        Raises:
+            BpfError: On system error or if no maps have been added.
+            Any exception raised by callbacks.
+        """
+        self._check_open()
+        if self._ptr is None:
+            raise BpfError("No maps added to ring buffer")
+
+        if timeout_ms == 0:
+            # Non-blocking: just consume
+            return self.consume()
+
+        loop = asyncio.get_running_loop()
+        fd = self.epoll_fd()
+
+        # Create future to wait on fd readability
+        future: asyncio.Future[None] = loop.create_future()
+
+        def on_readable() -> None:
+            if not future.done():
+                loop.remove_reader(fd)
+                future.set_result(None)
+
+        loop.add_reader(fd, on_readable)
+
+        try:
+            if timeout_ms > 0:
+                try:
+                    await asyncio.wait_for(future, timeout=timeout_ms / 1000)
+                except asyncio.TimeoutError:
+                    return 0
+            else:
+                await future
+
+            # Events available, consume them
+            return self.consume()
+        finally:
+            # Ensure reader is removed even on cancellation
+            try:
+                loop.remove_reader(fd)
+            except (ValueError, KeyError):
+                pass  # Already removed
+
+    def __aiter__(self) -> "_AsyncRingBufferIterator":
+        """Return async iterator over events.
+
+        Only available in iterator mode (maps added without callbacks).
+
+        Returns:
+            Async iterator yielding event data as bytes.
+
+        Raises:
+            BpfError: If ring buffer is in callback mode or no maps added.
+        """
+        if self._mode == "callback":
+            raise BpfError(
+                "Cannot iterate on callback-mode ring buffer; "
+                "events are delivered to callbacks during poll()"
+            )
+        if self._ptr is None:
+            raise BpfError("No maps added to ring buffer")
+        return _AsyncRingBufferIterator(self)
 
     def close(self) -> None:
         """Close ring buffer and free resources."""
@@ -406,19 +547,63 @@ class BpfRingBuffer:
     ) -> None:
         self.close()
 
+    async def __aenter__(self) -> "BpfRingBuffer":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: "TracebackType | None",
+    ) -> None:
+        self.close()
+
     def __del__(self) -> None:
         if not self._closed:
             self.close()
 
     def __repr__(self) -> str:
         status = "closed" if self._closed else "open"
+        mode = f" {self._mode}" if self._mode else ""
         if len(self._maps) == 0:
-            return f"<BpfRingBuffer (no maps) {status}>"
+            return f"<BpfRingBuffer (no maps){mode} {status}>"
         elif len(self._maps) == 1:
-            return f"<BpfRingBuffer map='{self._maps[0].name}' {status}>"
+            return f"<BpfRingBuffer map='{self._maps[0].name}'{mode} {status}>"
         else:
             names = ", ".join(f"'{m.name}'" for m in self._maps)
-            return f"<BpfRingBuffer maps=[{names}] {status}>"
+            return f"<BpfRingBuffer maps=[{names}]{mode} {status}>"
+
+
+class _AsyncRingBufferIterator:
+    """Async iterator for BpfRingBuffer events."""
+
+    def __init__(self, rb: BpfRingBuffer) -> None:
+        self._rb = rb
+
+    def __aiter__(self) -> "_AsyncRingBufferIterator":
+        return self
+
+    async def __anext__(self) -> bytes:
+        """Get next event, waiting if necessary."""
+        rb = self._rb
+
+        # Check if ring buffer is still valid
+        rb._check_open()
+
+        # Return queued event if available
+        if rb._event_queue:
+            return rb._event_queue.popleft()
+
+        # Wait for events
+        while True:
+            await rb.poll_async(timeout_ms=-1)
+
+            # Check for events after poll
+            if rb._event_queue:
+                return rb._event_queue.popleft()
+
+            # poll_async returned 0 events, could be spurious wakeup
+            # Continue waiting
 
 
 class BpfPerfBuffer:
