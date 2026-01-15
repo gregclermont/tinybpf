@@ -101,11 +101,11 @@ runs:
       run: |
         VERSION="${{ steps.libbpf-version.outputs.version }}"
         HEADERS_DIR="${{ runner.temp }}/libbpf-headers"
-        mkdir -p "$HEADERS_DIR"
+        mkdir -p "$HEADERS_DIR/bpf"
 
         echo "Downloading libbpf v$VERSION headers..."
         curl -sL "https://github.com/libbpf/libbpf/archive/refs/tags/v${VERSION}.tar.gz" | \
-          tar xz -C "$HEADERS_DIR" --strip-components=2 "libbpf-${VERSION}/src"
+          tar xz -C "$HEADERS_DIR/bpf" --strip-components=2 "libbpf-${VERSION}/src"
 
         echo "libbpf-path=$HEADERS_DIR" >> $GITHUB_OUTPUT
 
@@ -125,9 +125,15 @@ runs:
           mkdir -p "$VMLINUX_DIR"
 
           echo "Downloading vmlinux.h for $VMLINUX_ARCH..."
-          curl -sL "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/${VMLINUX_ARCH}/vmlinux.h" \
-            -o "$VMLINUX_DIR/vmlinux.h"
+          # Download tarball and extract the correct vmlinux.h (symlinks don't work via raw.githubusercontent)
+          curl -sL "https://github.com/libbpf/vmlinux.h/archive/refs/heads/main.tar.gz" | \
+            tar xz -C "$VMLINUX_DIR" --strip-components=1
 
+          # The include/{arch}/vmlinux.h files are symlinks, resolve them
+          VMLINUX_PATH=$(readlink -f "$VMLINUX_DIR/include/${VMLINUX_ARCH}/vmlinux.h")
+
+          # Copy to a simple location
+          cp "$VMLINUX_PATH" "$VMLINUX_DIR/vmlinux.h"
           VMLINUX_PATH="$VMLINUX_DIR/vmlinux.h"
         fi
 
