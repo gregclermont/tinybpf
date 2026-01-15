@@ -55,7 +55,7 @@ make test
 make test
 ```
 
-### Makefile targets
+### Makefile Targets
 
 Commands auto-detect OS and do the right thing:
 
@@ -71,20 +71,32 @@ macOS-only:
 | Target | Description |
 |--------|-------------|
 | `make lima-create` | Create and configure Lima VM (one-time) |
+| `make lima-shell` | Drop into Lima VM shell at project directory |
 | `make lima-delete` | Remove Lima VM |
 
-### Code quality
+### Running Individual Tests
 
-Linting and type checking:
+```bash
+# On Linux
+uv run pytest tests/test_api.py -v
+uv run pytest tests/test_load.py::test_load_minimal -v
+
+# On macOS - drop into Lima shell, then run pytest directly
+make lima-shell
+uv run pytest tests/test_api.py -v
+```
+
+## Code Quality
 
 | Target | Description |
 |--------|-------------|
 | `make check` | Run all checks (format, lint, typecheck) |
 | `make lint` | Run ruff linter |
+| `make lint-fix` | Run ruff linter with auto-fix |
 | `make format` | Run ruff formatter |
 | `make typecheck` | Run mypy type checker |
 
-### Pre-commit hooks
+### Pre-commit Hooks
 
 Pre-commit hooks run the same checks as CI. Install them to catch issues before pushing:
 
@@ -93,7 +105,7 @@ uv sync --extra dev
 uv run pre-commit install
 ```
 
-### Validating changes before pushing
+### Validating Changes
 
 **Always run pre-commit before pushing** to avoid CI failures:
 
@@ -117,48 +129,13 @@ uv run ruff format src/ tests/    # Format only
 uv run mypy                       # Type check only
 ```
 
-### Build wheel locally
+## Building
+
+### Build Wheel Locally
 
 ```bash
 pip install setuptools wheel
 pip wheel . --no-build-isolation --wheel-dir dist/
-```
-
-## CI/CD Workflows
-
-### Continuous Integration
-
-CI runs automatically on push to `main` and pull requests (Python 3.12, x86_64 only for speed).
-
-**Manual trigger with custom matrix** (for debugging):
-
-```bash
-# Test all Python versions
-gh workflow run ci.yml -f python-versions='["3.10", "3.11", "3.12"]'
-
-# Test specific version on aarch64
-gh workflow run ci.yml -f python-versions='["3.12"]' -f arch=aarch64
-
-# Watch the run
-gh run watch
-```
-
-### Building libbpf
-
-Run this when updating to a new libbpf version:
-
-```bash
-# Build libbpf binaries for both architectures
-gh workflow run build-libbpf.yml -f libbpf_version=1.5.0
-
-# Watch progress
-gh run watch
-
-# After successful build, update the version file
-echo "1.5.0" > .libbpf-version
-git add .libbpf-version
-git commit -m "Update libbpf to 1.5.0"
-git push
 ```
 
 ### Building eBPF Programs
@@ -200,6 +177,115 @@ docker run --rm -v $(pwd):/src -e EXTRA_CFLAGS="-DDEBUG" ghcr.io/gregclermont/ti
 
 **Supported architectures:** linux/amd64, linux/arm64 (auto-detected)
 
+## CI/CD Workflows
+
+### Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        INFRASTRUCTURE                                │
+│  (run occasionally when updating toolchain)                         │
+│                                                                      │
+│  build-libbpf.yml ──────► libbpf-v{version} release (tarballs)      │
+│                                  │                                   │
+│  build-compile-image.yml ──► ghcr.io/gregclermont/tinybpf-compile   │
+└─────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         DEVELOPMENT                                  │
+│  (run on every push/PR)                                             │
+│                                                                      │
+│  ci.yml ──► build eBPF test programs ──► run tests                  │
+└─────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                          RELEASE                                     │
+│  (manual trigger for each release)                                  │
+│                                                                      │
+│  release.yml ──► build wheels ──► test ──► GitHub release           │
+│                                              │                       │
+│                                              ▼                       │
+│                                    update gh-pages index             │
+└─────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                        VERIFICATION                                  │
+│  (manual trigger after release)                                     │
+│                                                                      │
+│  e2e-test.yml ──► install from index ──► run tests                  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Workflow Reference
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `ci.yml` | Push/PR, manual | Fast tests (py3.12), full matrix on dispatch |
+| `build-libbpf.yml` | Manual | Build libbpf native libs for new version |
+| `build-compile-image.yml` | Push to docker/, manual | Build and publish eBPF compile Docker image |
+| `release.yml` | Manual | Full release pipeline with multi-arch testing |
+| `e2e-test.yml` | Manual | Verify released package from index |
+
+### Continuous Integration
+
+CI runs automatically on push to `main` and pull requests (Python 3.12, x86_64 only for speed).
+
+**Manual trigger with custom matrix** (for debugging):
+
+```bash
+# Test all Python versions
+gh workflow run ci.yml -f python-versions='["3.10", "3.11", "3.12"]'
+
+# Test specific version on aarch64
+gh workflow run ci.yml -f arch=aarch64
+
+# Watch the run
+gh run watch
+```
+
+**Flow:**
+1. `build-ebpf` job runs `make compile` to build eBPF test programs
+2. `test` job downloads libbpf, eBPF objects, and runs pytest
+
+### Building libbpf
+
+Run this when updating to a new libbpf version:
+
+```bash
+# Build libbpf binaries for both architectures
+gh workflow run build-libbpf.yml -f libbpf_version=1.5.0
+
+# Watch progress
+gh run watch
+
+# After successful build, update the version file
+echo "1.5.0" > .libbpf-version
+git add .libbpf-version
+git commit -m "Update libbpf to 1.5.0"
+git push
+```
+
+| | |
+|---|---|
+| **Trigger** | Manual only |
+| **Input** | `libbpf_version` (e.g., "1.5.0") |
+| **Produces** | GitHub release `libbpf-v{version}` with `libbpf-x86_64.tar.gz` and `libbpf-aarch64.tar.gz` |
+
+### Building the Compile Image
+
+| | |
+|---|---|
+| **Trigger** | Push to `docker/`, `.libbpf-version`, or manual |
+| **Input** | `push` (boolean, default: true) |
+| **Produces** | `ghcr.io/gregclermont/tinybpf-compile` with tags: `latest`, `libbpf-{version}`, `{sha}` |
+
+```bash
+gh workflow run build-compile-image.yml
+```
+
 ### Creating a Release
 
 ```bash
@@ -213,11 +299,17 @@ gh run watch
 gh release view v0.2.0
 ```
 
-The release workflow:
-1. Builds wheels for x86_64 and aarch64
-2. Tests wheels on Python 3.10-3.12 (both architectures via native runners)
-3. Creates GitHub release with wheel assets
-4. Updates package index on gh-pages
+| | |
+|---|---|
+| **Trigger** | Manual only |
+| **Input** | `version` (required, e.g., "0.2.0") |
+| **Produces** | GitHub release `v{version}` with wheels, updated gh-pages index |
+
+**Flow:**
+1. **build** (x86_64 + aarch64): Download libbpf, build platform-specific wheels
+2. **test-wheel** (x86_64 + aarch64): Test wheels on Python 3.10-3.12
+3. **release**: Create GitHub release with wheel assets
+4. **update-index**: Update `gh-pages` branch with pip-compatible index
 
 ### End-to-End Testing
 
@@ -234,15 +326,68 @@ gh workflow run e2e-test.yml -f version=0.2.0 -f python-versions='["3.10", "3.11
 gh run watch
 ```
 
-## Workflow Reference
+| | |
+|---|---|
+| **Trigger** | Manual only |
+| **Inputs** | `version` (required), `python-versions` (optional) |
+| **Produces** | Test results |
 
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| `ci.yml` | Push/PR, manual | Fast tests (py3.12), full matrix on dispatch |
-| `build-libbpf.yml` | Manual | Build libbpf native libs for new version |
-| `build-compile-image.yml` | Push to docker/, manual | Build and publish eBPF compile Docker image |
-| `release.yml` | Manual | Full release pipeline with multi-arch testing |
-| `e2e-test.yml` | Manual | Verify released package from index |
+### Reusable Workflows
+
+These are called by other workflows and should not be triggered directly.
+
+| Workflow | Called by | Purpose |
+|----------|-----------|---------|
+| `_test-source.yml` | ci.yml | Test source code with pytest |
+| `_test-wheel.yml` | release.yml | Test built wheel before release |
+| `_test-install.yml` | e2e-test.yml | Test installing from package index |
+
+### Common Sequences
+
+**Regular development:**
+
+```bash
+# Automatic on push/PR
+git push  # → triggers ci.yml
+```
+
+**Creating a release:**
+
+```bash
+# 1. Run release workflow
+gh workflow run release.yml -f version=0.2.0
+gh run watch  # wait for completion
+
+# 2. Verify the release
+gh workflow run e2e-test.yml -f version=0.2.0
+gh run watch
+```
+
+**Updating libbpf version:**
+
+```bash
+# 1. Build new libbpf binaries
+gh workflow run build-libbpf.yml -f libbpf_version=1.5.0
+gh run watch
+
+# 2. Update version file (triggers Docker image rebuild)
+echo "1.5.0" > .libbpf-version
+git add .libbpf-version
+git commit -m "Update libbpf to 1.5.0"
+git push
+
+# 3. Verify CI still passes
+gh run watch
+```
+
+**Updating the eBPF compile image:**
+
+```bash
+# Edit docker/Dockerfile or docker/entrypoint.sh
+git add docker/
+git commit -m "Update eBPF compile image"
+git push  # → triggers build-compile-image.yml
+```
 
 ## Useful Commands
 
