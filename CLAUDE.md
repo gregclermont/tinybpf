@@ -84,6 +84,8 @@ src/tinybpf/
 
 4. **Context managers**: `BpfObject` and `BpfLink` implement `__enter__`/`__exit__` for automatic resource cleanup.
 
+5. **Error handling**: libbpf functions return `-errno` directly (not -1 with errno set via C library). Use `abs(ret)` to extract the error code, not `ctypes.get_errno()`. See `_check_err()` in `_object.py` for the canonical pattern.
+
 ### Test Requirements
 
 - `test_api.py` and `test_version.py`: No special requirements

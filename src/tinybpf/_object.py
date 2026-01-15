@@ -154,7 +154,11 @@ def _check_ptr(ptr: Any, operation: str) -> None:
 
 
 def _check_err(ret: int, operation: str) -> None:
-    """Check if a libbpf return value indicates an error."""
+    """Check if a libbpf return value indicates an error.
+
+    Note: libbpf functions return -errno directly (not -1 with errno set),
+    so we use abs(ret) to get the error code.
+    """
     if ret < 0:
         err_abs = abs(ret)
         msg = bindings.libbpf_strerror(err_abs)
@@ -530,9 +534,11 @@ class BpfMap(Generic[KT, VT]):
             self.fd, ctypes.cast(key_buf, ctypes.c_void_p), ctypes.cast(value_buf, ctypes.c_void_p)
         )
         if ret < 0:
-            if ctypes.get_errno() == errno.ENOENT:
-                return None
-            return None  # Key not found or error
+            err = abs(ret)
+            if err == errno.ENOENT:
+                return None  # Key not found - expected, dict-like behavior
+            msg = bindings.libbpf_strerror(err)
+            raise BpfError(f"Map lookup failed for '{self._name}': {msg}", errno=err)
         return self._from_value_bytes(value_buf.raw)
 
     def update(
@@ -576,7 +582,13 @@ class BpfMap(Generic[KT, VT]):
         key_buf = ctypes.create_string_buffer(key_bytes, self._key_size)
 
         ret = lib.bpf_map_delete_elem(self.fd, ctypes.cast(key_buf, ctypes.c_void_p))
-        return ret == 0
+        if ret < 0:
+            err = abs(ret)
+            if err == errno.ENOENT:
+                return False  # Key not found
+            msg = bindings.libbpf_strerror(err)
+            raise BpfError(f"Map delete failed for '{self._name}': {msg}", errno=err)
+        return True
 
     def __getitem__(self, key: KT) -> VT:
         """Get a value by key, raising KeyError if not found."""
@@ -623,7 +635,13 @@ class BpfMap(Generic[KT, VT]):
                 self.fd, prev_key_ptr, ctypes.cast(next_key_buf, ctypes.c_void_p)
             )
             if ret < 0:
-                break
+                err = abs(ret)
+                if err == errno.ENOENT:
+                    break  # No more keys - normal termination
+                msg = bindings.libbpf_strerror(err)
+                raise BpfError(
+                    f"Map iteration failed for '{self._name}': {msg}", errno=err
+                )
 
             key_bytes = next_key_buf.raw
             yield self._from_key_bytes(key_bytes)
