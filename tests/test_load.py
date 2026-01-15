@@ -592,8 +592,8 @@ class TestBpfRingBuffer:
                 iter(rb.__aiter__())  # Try to get async iterator
             rb.close()
 
-    def test_ringbuf_zero_copy_callback(self, ringbuf_bpf_path: Path) -> None:
-        """Zero-copy mode provides memoryview to callback."""
+    def test_ringbuf_as_memoryview_callback(self, ringbuf_bpf_path: Path) -> None:
+        """Memoryview mode provides memoryview to callback."""
         import subprocess
 
         received_types: list[type] = []
@@ -608,7 +608,9 @@ class TestBpfRingBuffer:
 
         with tinybpf.load(ringbuf_bpf_path) as obj:
             with obj.program("trace_execve").attach():
-                rb = tinybpf.BpfRingBuffer(obj.map("events"), callback, zero_copy=True)
+                rb = tinybpf.BpfRingBuffer(
+                    obj.map("events"), callback, as_memoryview=True
+                )
                 subprocess.run(["/bin/true"], check=True)
                 rb.poll(timeout_ms=100)
                 rb.close()
@@ -617,8 +619,8 @@ class TestBpfRingBuffer:
         assert all(t is memoryview for t in received_types)
         assert all(length == 24 for length in received_lengths)  # pid + tid + comm
 
-    def test_ringbuf_zero_copy_filter(self, ringbuf_bpf_path: Path) -> None:
-        """Zero-copy mode allows inspection without copying."""
+    def test_ringbuf_as_memoryview_filter(self, ringbuf_bpf_path: Path) -> None:
+        """Memoryview mode allows inspection without copying."""
         import subprocess
 
         inspected_count = [0]
@@ -636,34 +638,42 @@ class TestBpfRingBuffer:
 
         with tinybpf.load(ringbuf_bpf_path) as obj:
             with obj.program("trace_execve").attach():
-                rb = tinybpf.BpfRingBuffer(obj.map("events"), callback, zero_copy=True)
+                rb = tinybpf.BpfRingBuffer(
+                    obj.map("events"), callback, as_memoryview=True
+                )
                 subprocess.run(["/bin/true"], check=True)
                 rb.poll(timeout_ms=100)
                 rb.close()
 
         assert inspected_count[0] >= 1
 
-    def test_ringbuf_zero_copy_requires_callback(self, ringbuf_bpf_path: Path) -> None:
-        """zero_copy=True requires callback mode."""
+    def test_ringbuf_as_memoryview_requires_callback(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """as_memoryview=True requires callback mode."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             with pytest.raises(tinybpf.BpfError, match="requires a callback"):
-                tinybpf.BpfRingBuffer(obj.map("events"), zero_copy=True)
+                tinybpf.BpfRingBuffer(obj.map("events"), as_memoryview=True)
 
-    def test_ringbuf_zero_copy_add_requires_callback(self, ringbuf_bpf_path: Path) -> None:
-        """zero_copy=True on add() requires callback."""
+    def test_ringbuf_as_memoryview_add_requires_callback(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """as_memoryview=True on add() requires callback."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             rb = tinybpf.BpfRingBuffer()
             with pytest.raises(tinybpf.BpfError, match="requires a callback"):
-                rb.add(obj.map("events"), zero_copy=True)
+                rb.add(obj.map("events"), as_memoryview=True)
             rb.close()
 
-    def test_ringbuf_zero_copy_mode_mixing_error(self, ringbuf_bpf_path: Path) -> None:
-        """Cannot mix zero_copy and copy modes in same ring buffer."""
+    def test_ringbuf_memoryview_mode_mixing_error(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """Cannot mix memoryview and bytes modes in same ring buffer."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             rb = tinybpf.BpfRingBuffer()
-            rb.add(obj.map("events"), lambda d: 0, zero_copy=True)
-            with pytest.raises(tinybpf.BpfError, match="Cannot mix zero_copy and copy"):
-                rb.add(obj.map("events2"), lambda d: 0, zero_copy=False)
+            rb.add(obj.map("events"), lambda d: 0, as_memoryview=True)
+            with pytest.raises(tinybpf.BpfError, match="Cannot mix memoryview and bytes"):
+                rb.add(obj.map("events2"), lambda d: 0, as_memoryview=False)
             rb.close()
 
 
