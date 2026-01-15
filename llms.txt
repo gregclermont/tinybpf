@@ -1,0 +1,92 @@
+# tinybpf
+
+Minimal Python library for loading pre-compiled CO-RE eBPF programs. Uses ctypes bindings to bundled libbpf.
+
+## Install
+
+```bash
+uv add tinybpf --extra-index-url https://gregclermont.github.io/tinybpf/
+pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf/
+```
+
+Requires Linux 5.8+, libelf, root/CAP_BPF. Wheels: manylinux_2_28 x86_64/aarch64.
+
+## API
+
+```python
+import tinybpf
+
+# Load eBPF object file
+with tinybpf.load("program.bpf.o") as obj:
+    # Access programs and maps
+    obj.programs  # Dict-like: ProgramCollection
+    obj.maps      # Dict-like: MapCollection
+    obj.program("name")  # -> BpfProgram
+    obj.map("name")      # -> BpfMap
+
+# BpfProgram - attach methods return BpfLink
+prog.attach()                              # Auto-attach by section
+prog.attach_kprobe("func", retprobe=False)
+prog.attach_kretprobe("func")
+prog.attach_tracepoint("category", "name")
+prog.attach_raw_tracepoint("name")
+prog.attach_uprobe(binary, offset=0, pid=-1, retprobe=False)
+prog.attach_uretprobe(binary, offset=0, pid=-1)
+prog.name, prog.section, prog.type, prog.fd, prog.info
+
+# BpfMap - dict-like interface
+map[key] = value    # update
+value = map[key]    # lookup (KeyError if missing)
+del map[key]        # delete
+key in map          # contains
+map.lookup(key)     # -> value or None
+map.update(key, value, flags=BPF_ANY)  # flags: BPF_ANY|BPF_NOEXIST|BPF_EXIST
+map.delete(key)     # -> bool
+map.keys(), map.values(), map.items()  # iterators
+map.name, map.type, map.key_size, map.value_size, map.max_entries, map.fd, map.info
+
+# Keys/values: bytes, int, or ctypes.Structure
+
+# BpfLink
+link.destroy()  # detach program
+link.fd
+
+# Versions
+tinybpf.version()         # package version
+tinybpf.libbpf_version()  # bundled libbpf version
+
+# Types
+BpfObject, BpfProgram, BpfMap, BpfLink
+BpfMapType, BpfProgType  # IntEnums
+MapInfo, ProgramInfo     # dataclasses
+BpfError                 # exception with .errno
+BPF_ANY, BPF_NOEXIST, BPF_EXIST  # map update flags
+```
+
+## Example
+
+```python
+import tinybpf
+import ctypes
+
+class Event(ctypes.Structure):
+    _fields_ = [("pid", ctypes.c_uint32), ("comm", ctypes.c_char * 16)]
+
+with tinybpf.load("trace.bpf.o") as obj:
+    link = obj.program("trace_exec").attach_kprobe("do_execve")
+    # ... wait for events ...
+    for key, event in obj.maps["events"].items():
+        print(f"PID {event.pid}: {event.comm.decode()}")
+```
+
+## Common Errors
+
+- `BpfError: open failed: No such file or directory` - .bpf.o file not found
+- `BpfError: load failed: Operation not permitted` - need root or CAP_BPF
+- `BpfError: attach kprobe failed: No such file or directory` - kernel function doesn't exist
+- `KeyError` - program/map name not in object, or map key not found
+
+## Links
+
+- GitHub: https://github.com/gregclermont/tinybpf
+- Package index: https://gregclermont.github.io/tinybpf/
