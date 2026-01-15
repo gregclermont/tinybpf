@@ -222,7 +222,9 @@ class BpfRingBuffer:
     replacement for perf buffers, offering better performance and simpler
     usage with a single shared buffer across all CPUs.
 
-    Example:
+    Supports consuming from multiple ring buffer maps with a single poll().
+
+    Example (single map):
         def handle_event(data: bytes) -> int:
             print(f"Got {len(data)} bytes")
             return 0  # Continue polling
@@ -231,14 +233,53 @@ class BpfRingBuffer:
             with obj.program("trace").attach():
                 with BpfRingBuffer(obj.map("events"), handle_event) as rb:
                     rb.poll(timeout_ms=1000)
+
+    Example (multiple maps):
+        rb = BpfRingBuffer()
+        rb.add(obj.map("events1"), callback1)
+        rb.add(obj.map("events2"), callback2)
+        rb.poll()  # Polls all maps with single epoll
     """
 
     def __init__(
         self,
+        map: "BpfMap[Any, Any] | None" = None,
+        callback: Callable[[bytes], int] | None = None,
+    ) -> None:
+        """Create ring buffer consumer.
+
+        Args:
+            map: Optional ring buffer map. If provided, callback must also
+                 be provided.
+            callback: Optional callback for the map's events. Return 0 to
+                     continue polling, non-zero to stop.
+
+        Raises:
+            ValueError: If only one of map/callback is provided.
+        """
+        # Set _closed early so __del__ works if __init__ raises
+        self._closed = True
+
+        if (map is None) != (callback is None):
+            raise ValueError("map and callback must both be provided or both omitted")
+
+        self._ptr: Any = None  # Lazy init on first add()
+        self._maps: list[BpfMap[Any, Any]] = []
+        self._objs: set[BpfObject] = set()  # All parent objects for use-after-close
+        self._callbacks: list[Any] = []  # Keep ctypes callbacks alive
+        self._stored_exception: BaseException | None = None
+
+        self._closed = False
+
+        if map is not None:
+            self.add(map, callback)  # type: ignore[arg-type]
+
+    def add(
+        self,
         map: "BpfMap[Any, Any]",
         callback: Callable[[bytes], int],
     ) -> None:
-        """Create ring buffer consumer.
+        """Add a ring buffer map to this consumer.
 
         Args:
             map: Ring buffer map (must be BPF_MAP_TYPE_RINGBUF).
@@ -246,47 +287,52 @@ class BpfRingBuffer:
                      polling, non-zero to stop.
 
         Raises:
-            BpfError: If map is not a ring buffer type.
+            BpfError: If ring buffer is closed, map type is wrong,
+                     map already added, or libbpf call fails.
         """
-        # Set _closed early so __del__ works if __init__ raises
-        self._closed = True
+        self._check_open()
 
         if map.type != BpfMapType.RINGBUF:
             raise BpfError(
                 f"Map '{map.name}' is type {map.type.name}, expected RINGBUF"
             )
 
-        self._map = map
-        self._obj = map._obj  # For use-after-close detection
-        self._user_callback = callback
-        self._stored_exception: BaseException | None = None
+        if map in self._maps:
+            raise BpfError(f"Map '{map.name}' already added to this ring buffer")
 
         # Create ctypes callback wrapper that catches exceptions
         def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
             try:
-                # Copy data to Python bytes
                 event_data = ctypes.string_at(data, size)
-                return self._user_callback(event_data)
+                return callback(event_data)
             except BaseException as e:
                 self._stored_exception = e
                 return -1  # Stop polling
 
-        # Keep reference to prevent garbage collection
-        self._callback = bindings.RING_BUFFER_SAMPLE_FN(_callback_wrapper)
-
+        cb = bindings.RING_BUFFER_SAMPLE_FN(_callback_wrapper)
         lib = bindings._get_lib()
-        self._ptr = lib.ring_buffer__new(map.fd, self._callback, None, None)
-        _check_ptr(self._ptr, "ring_buffer__new")
 
-        # Mark as open only after successful initialization
-        self._closed = False
+        if self._ptr is None:
+            # First map: create ring buffer
+            self._ptr = lib.ring_buffer__new(map.fd, cb, None, None)
+            _check_ptr(self._ptr, "ring_buffer__new")
+        else:
+            # Additional maps: add to existing ring buffer
+            ret = lib.ring_buffer__add(self._ptr, map.fd, cb, None)
+            _check_err(ret, "ring_buffer__add")
+
+        # Track for lifecycle management
+        self._maps.append(map)
+        self._objs.add(map._obj)
+        self._callbacks.append(cb)
 
     def _check_open(self) -> None:
-        """Raise if parent BpfObject is closed or ring buffer is closed."""
+        """Raise if ring buffer is closed or any parent BpfObject is closed."""
         if self._closed:
             raise BpfError("Ring buffer is closed")
-        if self._obj._closed:
-            raise BpfError("Cannot use ring buffer after BpfObject is closed")
+        for obj in self._objs:
+            if obj._closed:
+                raise BpfError("Cannot use ring buffer after BpfObject is closed")
 
     def _check_and_reraise(self) -> None:
         """Re-raise any exception stored from callback."""
@@ -308,10 +354,12 @@ class BpfRingBuffer:
             Number of events consumed.
 
         Raises:
-            BpfError: On system error.
-            Any exception raised by the callback.
+            BpfError: On system error or if no maps have been added.
+            Any exception raised by the callbacks.
         """
         self._check_open()
+        if self._ptr is None:
+            raise BpfError("No maps added to ring buffer")
         lib = bindings._get_lib()
         ret = lib.ring_buffer__poll(self._ptr, timeout_ms)
         self._check_and_reraise()
@@ -327,10 +375,12 @@ class BpfRingBuffer:
             Number of events consumed.
 
         Raises:
-            BpfError: On system error.
-            Any exception raised by the callback.
+            BpfError: On system error or if no maps have been added.
+            Any exception raised by the callbacks.
         """
         self._check_open()
+        if self._ptr is None:
+            raise BpfError("No maps added to ring buffer")
         lib = bindings._get_lib()
         ret = lib.ring_buffer__consume(self._ptr)
         self._check_and_reraise()
@@ -340,8 +390,9 @@ class BpfRingBuffer:
     def close(self) -> None:
         """Close ring buffer and free resources."""
         if not self._closed:
-            lib = bindings._get_lib()
-            lib.ring_buffer__free(self._ptr)
+            if self._ptr is not None:
+                lib = bindings._get_lib()
+                lib.ring_buffer__free(self._ptr)
             self._closed = True
 
     def __enter__(self) -> "BpfRingBuffer":
@@ -361,7 +412,13 @@ class BpfRingBuffer:
 
     def __repr__(self) -> str:
         status = "closed" if self._closed else "open"
-        return f"<BpfRingBuffer map='{self._map.name}' {status}>"
+        if len(self._maps) == 0:
+            return f"<BpfRingBuffer (no maps) {status}>"
+        elif len(self._maps) == 1:
+            return f"<BpfRingBuffer map='{self._maps[0].name}' {status}>"
+        else:
+            names = ", ".join(f"'{m.name}'" for m in self._maps)
+            return f"<BpfRingBuffer maps=[{names}] {status}>"
 
 
 class BpfPerfBuffer:

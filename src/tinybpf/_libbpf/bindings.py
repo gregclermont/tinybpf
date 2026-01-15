@@ -211,6 +211,14 @@ def _setup_function_signatures(lib: ctypes.CDLL) -> None:
     lib.ring_buffer__free.argtypes = [ring_buffer_p]
     lib.ring_buffer__free.restype = None
 
+    lib.ring_buffer__add.argtypes = [
+        ring_buffer_p,  # rb
+        ctypes.c_int,  # map_fd
+        RING_BUFFER_SAMPLE_FN,  # sample_cb
+        ctypes.c_void_p,  # ctx
+    ]
+    lib.ring_buffer__add.restype = ctypes.c_int
+
     # Perf buffer functions
     lib.perf_buffer__new.argtypes = [
         ctypes.c_int,  # map_fd
