@@ -182,3 +182,136 @@ class TestBpfMapErrors:
 
         with pytest.raises(tinybpf.BpfError, match="closed"):
             list(hash_map.keys())
+
+
+class TestPinnedMaps:
+    """Tests for pinned BPF maps."""
+
+    @pytest.fixture
+    def pin_path(self) -> str:
+        """Return a path in /sys/fs/bpf for pinning tests, cleaned up after."""
+        path = "/sys/fs/bpf/tinybpf_test_pinned"
+        yield path
+        # Cleanup: remove if it exists
+        p = Path(path)
+        if p.exists():
+            p.unlink()
+
+    def test_pin_map(self, test_maps_bpf_path: Path, pin_path: str) -> None:
+        """Can pin a map to bpffs."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts")
+            hash_map.pin(pin_path)
+            assert Path(pin_path).exists()
+
+    def test_unpin_map(self, test_maps_bpf_path: Path, pin_path: str) -> None:
+        """Can unpin a previously pinned map."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts")
+            hash_map.pin(pin_path)
+            assert Path(pin_path).exists()
+
+            hash_map.unpin(pin_path)
+            assert not Path(pin_path).exists()
+
+    def test_open_pinned_map(self, test_maps_bpf_path: Path, pin_path: str) -> None:
+        """Can open a pinned map and read its metadata."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            original = obj.map("pid_counts")
+            original.pin(pin_path)
+
+            # Open the pinned map
+            with tinybpf.open_pinned_map(pin_path) as pinned:
+                assert pinned.name == "pid_counts"
+                assert pinned.type == tinybpf.BpfMapType.HASH
+                assert pinned.key_size == original.key_size
+                assert pinned.value_size == original.value_size
+                assert pinned.max_entries == original.max_entries
+                assert pinned.is_standalone
+
+    def test_pinned_map_operations(self, test_maps_bpf_path: Path, pin_path: str) -> None:
+        """Can perform CRUD operations on a pinned map."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            original = obj.map("pid_counts")
+            original.pin(pin_path)
+
+        # Open separately and perform operations
+        with tinybpf.open_pinned_map(pin_path) as pinned:
+            key = (88888).to_bytes(4, "little")
+            value = (999).to_bytes(8, "little")
+
+            # Update
+            pinned[key] = value
+
+            # Lookup
+            assert pinned[key] == value
+            assert key in pinned
+
+            # Delete
+            del pinned[key]
+            assert key not in pinned
+
+    def test_pinned_map_data_persists(self, test_maps_bpf_path: Path, pin_path: str) -> None:
+        """Data written to pinned map persists across opens."""
+        key = (77777).to_bytes(4, "little")
+        value = (12345).to_bytes(8, "little")
+
+        # Pin and write data
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            original = obj.map("pid_counts")
+            original[key] = value
+            original.pin(pin_path)
+
+        # Open pinned map and verify data persists
+        with tinybpf.open_pinned_map(pin_path) as pinned:
+            assert pinned[key] == value
+            # Clean up
+            del pinned[key]
+
+    def test_pinned_map_iteration(self, test_maps_bpf_path: Path, pin_path: str) -> None:
+        """Can iterate over entries in a pinned map."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            original = obj.map("pid_counts")
+            # Add some entries
+            for i in range(3):
+                key = (50000 + i).to_bytes(4, "little")
+                value = (i * 100).to_bytes(8, "little")
+                original[key] = value
+            original.pin(pin_path)
+
+        # Open and iterate
+        with tinybpf.open_pinned_map(pin_path) as pinned:
+            keys = list(pinned.keys())
+            assert len(keys) >= 3
+            items = list(pinned.items())
+            assert len(items) >= 3
+
+            # Clean up
+            for i in range(3):
+                key = (50000 + i).to_bytes(4, "little")
+                pinned.delete(key)
+
+    def test_pinned_map_use_after_close(self, test_maps_bpf_path: Path, pin_path: str) -> None:
+        """Using pinned map after close() should raise BpfError."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            obj.map("pid_counts").pin(pin_path)
+
+        pinned = tinybpf.open_pinned_map(pin_path)
+        pinned.close()
+
+        with pytest.raises(tinybpf.BpfError, match="closed"):
+            pinned.lookup(b"\x00" * 4)
+
+    def test_pin_standalone_map_raises(self, test_maps_bpf_path: Path, pin_path: str) -> None:
+        """Pinning a standalone map should raise BpfError."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            obj.map("pid_counts").pin(pin_path)
+
+        with tinybpf.open_pinned_map(pin_path) as pinned:
+            with pytest.raises(tinybpf.BpfError, match="standalone"):
+                pinned.pin("/sys/fs/bpf/another_path")
+
+    def test_open_nonexistent_pinned_map(self) -> None:
+        """Opening a non-existent pinned path should raise BpfError."""
+        with pytest.raises(tinybpf.BpfError):
+            tinybpf.open_pinned_map("/sys/fs/bpf/does_not_exist")

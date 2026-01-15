@@ -6,15 +6,27 @@ various key/value types including bytes, integers, and ctypes structures.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import errno
+import os
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from tinybpf._libbpf import bindings
-from tinybpf._types import BPF_ANY, BpfError, BpfMapType, MapInfo, _check_err
+from tinybpf._types import (
+    BPF_ANY,
+    BpfError,
+    BpfMapType,
+    MapInfo,
+    _BpfMapInfoKernel,
+    _check_err,
+)
 
 if TYPE_CHECKING:
+    import builtins
+    from types import TracebackType
+
     from tinybpf._object import BpfObject
 
 KT = TypeVar("KT")
@@ -22,7 +34,18 @@ VT = TypeVar("VT")
 
 
 class BpfMap(Generic[KT, VT]):
-    """A BPF map within a loaded object.
+    """A BPF map.
+
+    Maps can be obtained in two ways:
+
+    **Object-owned maps** (typical usage):
+        Obtained from BpfObject.maps or BpfObject.map(). Lifecycle is tied
+        to the parent BpfObject. Support pin() and unpin().
+
+    **Standalone maps** (from pinned path):
+        Obtained from open_pinned_map(). Own their file descriptor and
+        must be closed explicitly or via context manager. Do not support
+        pin() or unpin().
 
     Provides dict-like access to map elements and iteration support.
     By default, keys and values are treated as raw bytes.
@@ -30,21 +53,42 @@ class BpfMap(Generic[KT, VT]):
 
     def __init__(
         self,
-        map_ptr: Any,
-        obj: BpfObject,
+        map_ptr: Any = None,
+        obj: BpfObject | None = None,
+        *,
+        # For standalone maps (from open_pinned_map)
+        owned_fd: int | None = None,
+        name: str | None = None,
+        map_type: BpfMapType | None = None,
+        key_size: int | None = None,
+        value_size: int | None = None,
+        max_entries: int | None = None,
+        # Type hints for key/value conversion
         key_type: type[KT] | None = None,
         value_type: type[VT] | None = None,
     ) -> None:
         self._ptr = map_ptr
-        self._obj = obj  # Keep reference to prevent GC
-        lib = bindings._get_lib()
-        self._name = lib.bpf_map__name(map_ptr).decode("utf-8")
-        self._type = BpfMapType(lib.bpf_map__type(map_ptr))
-        self._key_size = lib.bpf_map__key_size(map_ptr)
-        self._value_size = lib.bpf_map__value_size(map_ptr)
-        self._max_entries = lib.bpf_map__max_entries(map_ptr)
+        self._obj = obj  # Keep reference to prevent GC (object-owned maps)
+        self._owned_fd = owned_fd  # fd we own (standalone maps)
+        self._closed = False
         self._key_type = key_type
         self._value_type = value_type
+
+        if map_ptr is not None:
+            # Object-owned map: extract info from libbpf pointer
+            lib = bindings._get_lib()
+            self._name = lib.bpf_map__name(map_ptr).decode("utf-8")
+            self._type = BpfMapType(lib.bpf_map__type(map_ptr))
+            self._key_size = lib.bpf_map__key_size(map_ptr)
+            self._value_size = lib.bpf_map__value_size(map_ptr)
+            self._max_entries = lib.bpf_map__max_entries(map_ptr)
+        else:
+            # Standalone map: use provided values
+            self._name = name or ""
+            self._type = map_type or BpfMapType.UNSPEC
+            self._key_size = key_size or 0
+            self._value_size = value_size or 0
+            self._max_entries = max_entries or 0
 
     def __repr__(self) -> str:
         return (
@@ -81,6 +125,8 @@ class BpfMap(Generic[KT, VT]):
     def fd(self) -> int:
         """Return the map file descriptor."""
         self._check_open()
+        if self._owned_fd is not None:
+            return self._owned_fd
         lib = bindings._get_lib()
         return lib.bpf_map__fd(self._ptr)
 
@@ -95,9 +141,16 @@ class BpfMap(Generic[KT, VT]):
             max_entries=self._max_entries,
         )
 
+    @property
+    def is_standalone(self) -> bool:
+        """Return True if this map was opened from a pinned path."""
+        return self._owned_fd is not None
+
     def _check_open(self) -> None:
-        """Raise if parent BpfObject is closed."""
-        if self._obj._closed:
+        """Raise if map is not usable."""
+        if self._closed:
+            raise BpfError("Map is closed")
+        if self._obj is not None and self._obj._closed:
             raise BpfError("Cannot use map after BpfObject is closed")
 
     def _to_key_bytes(self, key: KT) -> bytes:
@@ -304,6 +357,71 @@ class BpfMap(Generic[KT, VT]):
         value = self.lookup(key)
         return value if value is not None else default
 
+    def pin(self, path: str) -> None:
+        """Pin this map to the BPF filesystem.
+
+        The map will persist at the given path until unpinned or the
+        system reboots. Other processes can open the pinned map using
+        open_pinned_map().
+
+        Args:
+            path: Path in bpffs (e.g., "/sys/fs/bpf/my_map").
+
+        Raises:
+            BpfError: If pinning fails or map is standalone.
+        """
+        self._check_open()
+        if self._ptr is None:
+            raise BpfError("Cannot pin a standalone map")
+        lib = bindings._get_lib()
+        ret = lib.bpf_map__pin(self._ptr, path.encode("utf-8"))
+        _check_err(ret, f"pin map '{self._name}' to '{path}'")
+
+    def unpin(self, path: str) -> None:
+        """Unpin this map from the BPF filesystem.
+
+        Args:
+            path: Path where map was pinned.
+
+        Raises:
+            BpfError: If unpinning fails or map is standalone.
+        """
+        self._check_open()
+        if self._ptr is None:
+            raise BpfError("Cannot unpin a standalone map")
+        lib = bindings._get_lib()
+        ret = lib.bpf_map__unpin(self._ptr, path.encode("utf-8"))
+        _check_err(ret, f"unpin map '{self._name}' from '{path}'")
+
+    def close(self) -> None:
+        """Close a standalone map, releasing its file descriptor.
+
+        Only applicable to maps obtained from open_pinned_map().
+        Object-owned maps are closed when their parent BpfObject is closed.
+        """
+        if self._owned_fd is not None and not self._closed:
+            os.close(self._owned_fd)
+        self._closed = True
+
+    def __enter__(self) -> BpfMap[KT, VT]:
+        """Context manager entry."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: builtins.type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Context manager exit - closes standalone maps."""
+        self.close()
+
+    def __del__(self) -> None:
+        """Clean up file descriptor on garbage collection."""
+        if self._owned_fd is not None and not self._closed:
+            with contextlib.suppress(OSError):
+                os.close(self._owned_fd)
+
 
 class MapCollection(Mapping[str, BpfMap[Any, Any]]):
     """Collection of BPF maps in an object, accessible by name."""
@@ -322,3 +440,62 @@ class MapCollection(Mapping[str, BpfMap[Any, Any]]):
 
     def __repr__(self) -> str:
         return f"<MapCollection {list(self._maps.keys())}>"
+
+
+def open_pinned_map(
+    path: str,
+    key_type: type[KT] | None = None,
+    value_type: type[VT] | None = None,
+) -> BpfMap[KT, VT]:
+    """Open a pinned BPF map by path.
+
+    Opens a map that was previously pinned to the BPF filesystem using
+    BpfMap.pin(). The returned map can be used for reading and writing
+    data, and must be closed when done.
+
+    Args:
+        path: Path to pinned map (e.g., "/sys/fs/bpf/my_map").
+        key_type: Optional type for key conversion (int or ctypes.Structure).
+        value_type: Optional type for value conversion (int or ctypes.Structure).
+
+    Returns:
+        A standalone BpfMap that must be closed when done.
+
+    Raises:
+        BpfError: If opening the pinned map fails.
+
+    Example:
+        with open_pinned_map("/sys/fs/bpf/my_events") as events:
+            for key, value in events.items():
+                print(key, value)
+    """
+    lib = bindings._get_lib()
+
+    # Open the pinned object - returns fd or negative errno
+    fd = lib.bpf_obj_get(path.encode("utf-8"))
+    if fd < 0:
+        _check_err(fd, f"open pinned map '{path}'")
+
+    # Get map info via bpf_obj_get_info_by_fd
+    info = _BpfMapInfoKernel()
+    info_len = ctypes.c_uint32(ctypes.sizeof(info))
+
+    ret = lib.bpf_obj_get_info_by_fd(
+        fd,
+        ctypes.byref(info),
+        ctypes.byref(info_len),
+    )
+    if ret < 0:
+        os.close(fd)
+        _check_err(ret, f"get info for pinned map '{path}'")
+
+    return BpfMap(
+        owned_fd=fd,
+        name=info.name.decode("utf-8").rstrip("\x00"),
+        map_type=BpfMapType(info.type),
+        key_size=info.key_size,
+        value_size=info.value_size,
+        max_entries=info.max_entries,
+        key_type=key_type,
+        value_type=value_type,
+    )

@@ -232,7 +232,8 @@ class BpfRingBuffer:
 
         # Track for lifecycle management
         self._maps.append(map)
-        self._objs.add(map._obj)
+        if map._obj is not None:
+            self._objs.add(map._obj)
         self._callbacks.append(cb)
 
     def _check_open(self) -> None:
@@ -664,7 +665,7 @@ class BpfPerfBuffer:
         """Raise if parent BpfObject is closed or perf buffer is closed."""
         if self._closed:
             raise BpfError("Perf buffer is closed")
-        if self._obj._closed:
+        if self._obj is not None and self._obj._closed:
             raise BpfError("Cannot use perf buffer after BpfObject is closed")
 
     def _check_and_reraise(self) -> None:
