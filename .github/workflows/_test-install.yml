@@ -36,5 +36,5 @@ jobs:
         run: |
           uv venv --quiet --python ${{ matrix.python-version }}
           uv pip install --quiet tinybpf==${{ inputs.version }} pytest \
-            --index-url ${{ inputs.index-url }}
+            --extra-index-url ${{ inputs.index-url }}
           uv run --quiet pytest repo/tests/
