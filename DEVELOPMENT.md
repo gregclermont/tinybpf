@@ -73,6 +73,24 @@ macOS-only:
 | `make lima-create` | Create and configure Lima VM (one-time) |
 | `make lima-delete` | Remove Lima VM |
 
+### Code quality
+
+Linting and type checking:
+
+| Target | Description |
+|--------|-------------|
+| `make check` | Run all checks (format, lint, typecheck) |
+| `make lint` | Run ruff linter |
+| `make format` | Run ruff formatter |
+| `make typecheck` | Run mypy type checker |
+
+Pre-commit hooks (optional, CI enforces the same checks):
+
+```bash
+uv sync --extra dev
+uv run pre-commit install
+```
+
 ### Build wheel locally
 
 ```bash
