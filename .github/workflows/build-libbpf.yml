@@ -35,7 +35,8 @@ jobs:
               curl -L https://github.com/libbpf/libbpf/archive/refs/tags/v${{ inputs.libbpf_version }}.tar.gz | tar xz
               cd libbpf-${{ inputs.libbpf_version }}/src
               make
-              cp libbpf.so.* /output/
+              # Only copy the soname version (libbpf.so.1), not the full version (libbpf.so.1.4.0)
+              cp libbpf.so.1 /output/
             '
 
       - name: List artifacts
