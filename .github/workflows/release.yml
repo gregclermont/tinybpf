@@ -92,7 +92,7 @@ jobs:
     needs: build
     uses: ./.github/workflows/_test-wheel.yml
     with:
-      python-versions: '["3.9", "3.10", "3.11", "3.12"]'
+      python-versions: '["3.10", "3.11", "3.12"]'
       arch: x86_64
       wheel-artifact: wheel-x86_64
 
@@ -100,7 +100,7 @@ jobs:
     needs: build
     uses: ./.github/workflows/_test-wheel.yml
     with:
-      python-versions: '["3.9", "3.10", "3.11", "3.12"]'
+      python-versions: '["3.10", "3.11", "3.12"]'
       arch: aarch64
       wheel-artifact: wheel-aarch64
 

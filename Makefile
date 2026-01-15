@@ -73,4 +73,24 @@ endif
 clean:
 	rm -f tests/bpf/*.bpf.o
 
-.PHONY: compile setup-linux test-linux lima-create lima-delete lima-shell setup-lima test-lima setup test clean
+#
+# Linting and type checking (no OS dispatch needed)
+#
+lint:
+	uv run ruff check src/ tests/
+
+lint-fix:
+	uv run ruff check --fix src/ tests/
+
+format:
+	uv run ruff format src/ tests/
+
+format-check:
+	uv run ruff format --check src/ tests/
+
+typecheck:
+	uv run mypy
+
+check: format-check lint typecheck
+
+.PHONY: compile setup-linux test-linux lima-create lima-delete lima-shell setup-lima test-lima setup test clean lint lint-fix format format-check typecheck check

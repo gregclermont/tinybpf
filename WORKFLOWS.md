@@ -99,7 +99,7 @@ Main CI workflow that builds eBPF test programs and runs the test suite.
 
 ```bash
 # Run with all Python versions
-gh workflow run ci.yml -f python-versions='["3.9", "3.10", "3.11", "3.12"]'
+gh workflow run ci.yml -f python-versions='["3.10", "3.11", "3.12"]'
 
 # Run on ARM
 gh workflow run ci.yml -f arch=aarch64
@@ -119,7 +119,7 @@ Complete release pipeline: build wheels, test, publish, update index.
 
 **Flow:**
 1. **build** (x86_64 + aarch64): Download libbpf, build platform-specific wheels
-2. **test-wheel** (x86_64 + aarch64): Test wheels on Python 3.9-3.12
+2. **test-wheel** (x86_64 + aarch64): Test wheels on Python 3.10-3.12
 3. **release**: Create GitHub release with wheel assets
 4. **update-index**: Update `gh-pages` branch with pip-compatible index
 

@@ -53,7 +53,7 @@ uv run pytest tests/test_api.py -v
 
 ```bash
 # Trigger CI with custom Python versions
-gh workflow run ci.yml -f python-versions='["3.9", "3.10", "3.11", "3.12"]'
+gh workflow run ci.yml -f python-versions='["3.10", "3.11", "3.12"]'
 
 # Create a release
 gh workflow run release.yml -f version=0.2.0

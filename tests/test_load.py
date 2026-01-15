@@ -145,9 +145,7 @@ class TestBpfMaps:
             value = 42
 
             # Update
-            hash_map.update(
-                key.to_bytes(4, "little"), value.to_bytes(8, "little")
-            )
+            hash_map.update(key.to_bytes(4, "little"), value.to_bytes(8, "little"))
 
             # Lookup
             result = hash_map.lookup(key.to_bytes(4, "little"))
@@ -608,9 +606,7 @@ class TestBpfRingBuffer:
 
         with tinybpf.load(ringbuf_bpf_path) as obj:
             with obj.program("trace_execve").attach():
-                rb = tinybpf.BpfRingBuffer(
-                    obj.map("events"), callback, as_memoryview=True
-                )
+                rb = tinybpf.BpfRingBuffer(obj.map("events"), callback, as_memoryview=True)
                 subprocess.run(["/bin/true"], check=True)
                 rb.poll(timeout_ms=100)
                 rb.close()
@@ -638,26 +634,20 @@ class TestBpfRingBuffer:
 
         with tinybpf.load(ringbuf_bpf_path) as obj:
             with obj.program("trace_execve").attach():
-                rb = tinybpf.BpfRingBuffer(
-                    obj.map("events"), callback, as_memoryview=True
-                )
+                rb = tinybpf.BpfRingBuffer(obj.map("events"), callback, as_memoryview=True)
                 subprocess.run(["/bin/true"], check=True)
                 rb.poll(timeout_ms=100)
                 rb.close()
 
         assert inspected_count[0] >= 1
 
-    def test_ringbuf_as_memoryview_requires_callback(
-        self, ringbuf_bpf_path: Path
-    ) -> None:
+    def test_ringbuf_as_memoryview_requires_callback(self, ringbuf_bpf_path: Path) -> None:
         """as_memoryview=True requires callback mode."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             with pytest.raises(tinybpf.BpfError, match="requires a callback"):
                 tinybpf.BpfRingBuffer(obj.map("events"), as_memoryview=True)
 
-    def test_ringbuf_as_memoryview_add_requires_callback(
-        self, ringbuf_bpf_path: Path
-    ) -> None:
+    def test_ringbuf_as_memoryview_add_requires_callback(self, ringbuf_bpf_path: Path) -> None:
         """as_memoryview=True on add() requires callback."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             rb = tinybpf.BpfRingBuffer()
@@ -665,9 +655,7 @@ class TestBpfRingBuffer:
                 rb.add(obj.map("events"), as_memoryview=True)
             rb.close()
 
-    def test_ringbuf_memoryview_mode_mixing_error(
-        self, ringbuf_bpf_path: Path
-    ) -> None:
+    def test_ringbuf_memoryview_mode_mixing_error(self, ringbuf_bpf_path: Path) -> None:
         """Cannot mix memoryview and bytes modes in same ring buffer."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             rb = tinybpf.BpfRingBuffer()
@@ -712,9 +700,7 @@ class TestBpfRingBuffer:
 
                 rb.close()
 
-    def test_ringbuf_sync_iteration_callback_mode_error(
-        self, ringbuf_bpf_path: Path
-    ) -> None:
+    def test_ringbuf_sync_iteration_callback_mode_error(self, ringbuf_bpf_path: Path) -> None:
         """Sync iteration on callback mode raises error."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             rb = tinybpf.BpfRingBuffer(obj.map("events"), callback=lambda d: 0)
@@ -898,9 +884,7 @@ class TestBpfRingBufferAsync:
             assert isinstance(event, tinybpf.RingBufferEvent)
             assert isinstance(event.data, bytes)
 
-    def test_ringbuf_tagged_events_on_callback_mode_error(
-        self, ringbuf_bpf_path: Path
-    ) -> None:
+    def test_ringbuf_tagged_events_on_callback_mode_error(self, ringbuf_bpf_path: Path) -> None:
         """events() raises error on callback-mode ring buffer."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
@@ -930,6 +914,7 @@ class TestBpfPerfBuffer:
 
     def test_perfbuf_creation(self, perf_bpf_path: Path) -> None:
         """Can create perf buffer from perf event array map."""
+
         def callback(cpu: int, data: bytes) -> None:
             pass
 

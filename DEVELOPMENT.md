@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.9+
+- Python 3.10+
 - [uv](https://docs.astral.sh/uv/) package manager
 - [gh](https://cli.github.com/) CLI (for workflow triggers)
 
@@ -90,7 +90,7 @@ CI runs automatically on push to `main` and pull requests (Python 3.12, x86_64 o
 
 ```bash
 # Test all Python versions
-gh workflow run ci.yml -f python-versions='["3.9", "3.10", "3.11", "3.12"]'
+gh workflow run ci.yml -f python-versions='["3.10", "3.11", "3.12"]'
 
 # Test specific version on aarch64
 gh workflow run ci.yml -f python-versions='["3.12"]' -f arch=aarch64
@@ -171,7 +171,7 @@ gh release view v0.2.0
 
 The release workflow:
 1. Builds wheels for x86_64 and aarch64
-2. Tests wheels on Python 3.9-3.12 (both architectures via native runners)
+2. Tests wheels on Python 3.10-3.12 (both architectures via native runners)
 3. Creates GitHub release with wheel assets
 4. Updates package index on gh-pages
 
@@ -184,7 +184,7 @@ Verify a released version installs correctly from the package index:
 gh workflow run e2e-test.yml -f version=0.2.0
 
 # Test all Python versions
-gh workflow run e2e-test.yml -f version=0.2.0 -f python-versions='["3.9", "3.10", "3.11", "3.12"]'
+gh workflow run e2e-test.yml -f version=0.2.0 -f python-versions='["3.10", "3.11", "3.12"]'
 
 # Watch
 gh run watch

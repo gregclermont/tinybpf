@@ -60,7 +60,7 @@ with tinybpf.load("program.bpf.o") as obj:
 - Installable via `uv add` / `uv --with` / inline script deps
 - Wheel must bundle libbpf (required to load eBPF)
 - Type hints throughout (py.typed marker included)
-- Python 3.9+ compatibility
+- Python 3.10+ compatibility
 
 ## Distribution
 - Wheel = complete package (Python code + bundled libbpf.so)

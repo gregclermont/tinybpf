@@ -16,19 +16,15 @@ import asyncio
 import ctypes
 import errno
 from collections import deque
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     Generic,
-    Iterator,
-    Mapping,
     TypeVar,
-    Union,
-    overload,
 )
 
 from tinybpf._libbpf import bindings
@@ -187,7 +183,7 @@ class BpfLink:
     Use as a context manager for automatic cleanup.
     """
 
-    def __init__(self, link_ptr: bindings.bpf_link_p, description: str = "") -> None:
+    def __init__(self, link_ptr: Any, description: str = "") -> None:
         self._ptr = link_ptr
         self._description = description
         self._destroyed = False
@@ -264,7 +260,7 @@ class BpfRingBuffer:
 
     def __init__(
         self,
-        map: "BpfMap[Any, Any] | None" = None,
+        map: BpfMap[Any, Any] | None = None,
         callback: Callable[[bytes], int] | Callable[[memoryview], int] | None = None,
         as_memoryview: bool = False,
     ) -> None:
@@ -336,7 +332,7 @@ class BpfRingBuffer:
 
     def add(
         self,
-        map: "BpfMap[Any, Any]",
+        map: BpfMap[Any, Any],
         callback: Callable[[bytes], int] | Callable[[memoryview], int] | None = None,
         as_memoryview: bool | None = None,
     ) -> None:
@@ -358,17 +354,13 @@ class BpfRingBuffer:
         self._check_open()
 
         if map.type != BpfMapType.RINGBUF:
-            raise BpfError(
-                f"Map '{map.name}' is type {map.type.name}, expected RINGBUF"
-            )
+            raise BpfError(f"Map '{map.name}' is type {map.type.name}, expected RINGBUF")
 
         if map in self._maps:
             raise BpfError(f"Map '{map.name}' already added to this ring buffer")
 
         # Determine memoryview mode (use instance default if not specified)
-        use_memoryview = (
-            as_memoryview if as_memoryview is not None else self._as_memoryview
-        )
+        use_memoryview = as_memoryview if as_memoryview is not None else self._as_memoryview
 
         # Memoryview mode requires callback
         if use_memoryview and callback is None:
@@ -386,8 +378,7 @@ class BpfRingBuffer:
         new_mode = "callback" if callback is not None else "iterator"
         if self._mode is not None and self._mode != new_mode:
             raise BpfError(
-                f"Cannot mix callback and iterator modes; "
-                f"ring buffer is in {self._mode} mode"
+                f"Cannot mix callback and iterator modes; ring buffer is in {self._mode} mode"
             )
         self._mode = new_mode
 
@@ -403,7 +394,7 @@ class BpfRingBuffer:
                         array_type = ctypes.c_char * size
                         array_ptr = ctypes.cast(data, ctypes.POINTER(array_type))
                         mv = memoryview(array_ptr.contents).cast("B")
-                        return callback(mv)
+                        return callback(mv)  # type: ignore[arg-type]
                     except BaseException as e:
                         self._stored_exception = e
                         return -1  # Stop polling
@@ -412,7 +403,7 @@ class BpfRingBuffer:
                 def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
                     try:
                         event_data = ctypes.string_at(data, size)
-                        return callback(event_data)
+                        return callback(event_data)  # type: ignore[arg-type]
                     except BaseException as e:
                         self._stored_exception = e
                         return -1  # Stop polling
@@ -591,7 +582,7 @@ class BpfRingBuffer:
             except (ValueError, KeyError):
                 pass  # Already removed
 
-    def __aiter__(self) -> "_AsyncRingBufferIterator":
+    def __aiter__(self) -> _AsyncRingBufferIterator:
         """Return async iterator over events.
 
         Only available in iterator mode (maps added without callbacks).
@@ -638,7 +629,7 @@ class BpfRingBuffer:
             _map_name, data = self._event_queue.popleft()
             yield data
 
-    def events(self) -> "_TaggedRingBufferIterator":
+    def events(self) -> _TaggedRingBufferIterator:
         """Return async iterator yielding tagged events.
 
         Each event includes the source map name, useful for multi-map
@@ -678,25 +669,25 @@ class BpfRingBuffer:
                 lib.ring_buffer__free(self._ptr)
             self._closed = True
 
-    def __enter__(self) -> "BpfRingBuffer":
+    def __enter__(self) -> BpfRingBuffer:
         return self
 
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: "TracebackType | None",
+        exc_tb: TracebackType | None,
     ) -> None:
         self.close()
 
-    async def __aenter__(self) -> "BpfRingBuffer":
+    async def __aenter__(self) -> BpfRingBuffer:
         return self
 
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: "TracebackType | None",
+        exc_tb: TracebackType | None,
     ) -> None:
         self.close()
 
@@ -722,7 +713,7 @@ class _AsyncRingBufferIterator:
     def __init__(self, rb: BpfRingBuffer) -> None:
         self._rb = rb
 
-    def __aiter__(self) -> "_AsyncRingBufferIterator":
+    def __aiter__(self) -> _AsyncRingBufferIterator:
         return self
 
     async def __anext__(self) -> bytes:
@@ -756,7 +747,7 @@ class _TaggedRingBufferIterator:
     def __init__(self, rb: BpfRingBuffer) -> None:
         self._rb = rb
 
-    def __aiter__(self) -> "_TaggedRingBufferIterator":
+    def __aiter__(self) -> _TaggedRingBufferIterator:
         return self
 
     async def __anext__(self) -> RingBufferEvent:
@@ -805,7 +796,7 @@ class BpfPerfBuffer:
 
     def __init__(
         self,
-        map: "BpfMap[Any, Any]",
+        map: BpfMap[Any, Any],
         sample_callback: Callable[[int, bytes], None],
         lost_callback: Callable[[int, int], None] | None = None,
         page_count: int = 8,
@@ -831,9 +822,7 @@ class BpfPerfBuffer:
         self._closed = True
 
         if map.type != BpfMapType.PERF_EVENT_ARRAY:
-            raise BpfError(
-                f"Map '{map.name}' is type {map.type.name}, expected PERF_EVENT_ARRAY"
-            )
+            raise BpfError(f"Map '{map.name}' is type {map.type.name}, expected PERF_EVENT_ARRAY")
 
         if page_count <= 0 or (page_count & (page_count - 1)) != 0:
             raise ValueError(f"page_count must be a power of 2, got {page_count}")
@@ -932,14 +921,14 @@ class BpfPerfBuffer:
             lib.perf_buffer__free(self._ptr)
             self._closed = True
 
-    def __enter__(self) -> "BpfPerfBuffer":
+    def __enter__(self) -> BpfPerfBuffer:
         return self
 
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: "TracebackType | None",
+        exc_tb: TracebackType | None,
     ) -> None:
         self.close()
 
@@ -958,7 +947,7 @@ class BpfProgram:
     Provides methods to attach the program to various hook points.
     """
 
-    def __init__(self, prog_ptr: bindings.bpf_program_p, obj: BpfObject) -> None:
+    def __init__(self, prog_ptr: Any, obj: BpfObject) -> None:
         self._ptr = prog_ptr
         self._obj = obj  # Keep reference to prevent GC
         lib = bindings._get_lib()
@@ -1031,9 +1020,7 @@ class BpfProgram:
         """
         self._check_open()
         lib = bindings._get_lib()
-        link = lib.bpf_program__attach_kprobe(
-            self._ptr, retprobe, func_name.encode("utf-8")
-        )
+        link = lib.bpf_program__attach_kprobe(self._ptr, retprobe, func_name.encode("utf-8"))
         _check_ptr(link, f"attach kprobe to '{func_name}'")
         kind = "kretprobe" if retprobe else "kprobe"
         return BpfLink(link, f"{kind}:{func_name}")
@@ -1121,9 +1108,7 @@ class BpfProgram:
         kind = "uretprobe" if retprobe else "uprobe"
         return BpfLink(link, f"{kind}:{binary_path}+{offset}")
 
-    def attach_uretprobe(
-        self, binary_path: str | Path, offset: int = 0, pid: int = -1
-    ) -> BpfLink:
+    def attach_uretprobe(self, binary_path: str | Path, offset: int = 0, pid: int = -1) -> BpfLink:
         """Attach to a uretprobe (function return).
 
         Args:
@@ -1153,7 +1138,7 @@ class BpfMap(Generic[KT, VT]):
 
     def __init__(
         self,
-        map_ptr: bindings.bpf_map_p,
+        map_ptr: Any,
         obj: BpfObject,
         key_type: type[KT] | None = None,
         value_type: type[VT] | None = None,
@@ -1227,9 +1212,7 @@ class BpfMap(Generic[KT, VT]):
         """Convert key to bytes."""
         if isinstance(key, bytes):
             if len(key) != self._key_size:
-                raise ValueError(
-                    f"Key size mismatch: got {len(key)}, expected {self._key_size}"
-                )
+                raise ValueError(f"Key size mismatch: got {len(key)}, expected {self._key_size}")
             return key
         if isinstance(key, ctypes.Structure):
             return bytes(key)
@@ -1258,7 +1241,7 @@ class BpfMap(Generic[KT, VT]):
         if self._key_type is int:
             return int.from_bytes(data, byteorder="little")  # type: ignore
         if issubclass(self._key_type, ctypes.Structure):
-            return self._key_type.from_buffer_copy(data)  # type: ignore
+            return self._key_type.from_buffer_copy(data)
         return data  # type: ignore
 
     def _from_value_bytes(self, data: bytes) -> VT:
@@ -1268,7 +1251,7 @@ class BpfMap(Generic[KT, VT]):
         if self._value_type is int:
             return int.from_bytes(data, byteorder="little")  # type: ignore
         if issubclass(self._value_type, ctypes.Structure):
-            return self._value_type.from_buffer_copy(data)  # type: ignore
+            return self._value_type.from_buffer_copy(data)
         return data  # type: ignore
 
     def lookup(self, key: KT) -> VT | None:
@@ -1297,9 +1280,7 @@ class BpfMap(Generic[KT, VT]):
             raise BpfError(f"Map lookup failed for '{self._name}': {msg}", errno=err)
         return self._from_value_bytes(value_buf.raw)
 
-    def update(
-        self, key: KT, value: VT, flags: int = BPF_ANY
-    ) -> None:
+    def update(self, key: KT, value: VT, flags: int = BPF_ANY) -> None:
         """Update a map element.
 
         Args:
@@ -1398,9 +1379,7 @@ class BpfMap(Generic[KT, VT]):
                 if err == errno.ENOENT:
                     break  # No more keys - normal termination
                 msg = bindings.libbpf_strerror(err)
-                raise BpfError(
-                    f"Map iteration failed for '{self._name}': {msg}", errno=err
-                )
+                raise BpfError(f"Map iteration failed for '{self._name}': {msg}", errno=err)
 
             key_bytes = next_key_buf.raw
             yield self._from_key_bytes(key_bytes)
@@ -1485,7 +1464,7 @@ class BpfObject:
                 print(prog.name, prog.type)
     """
 
-    def __init__(self, obj_ptr: bindings.bpf_object_p, path: Path) -> None:
+    def __init__(self, obj_ptr: Any, path: Path) -> None:
         self._ptr = obj_ptr
         self._path = path
         self._closed = False

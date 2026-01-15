@@ -5,7 +5,6 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 from pathlib import Path
-from typing import Union
 
 _lib: ctypes.CDLL | None = None
 _initialized: bool = False
@@ -243,7 +242,7 @@ def _setup_function_signatures(lib: ctypes.CDLL) -> None:
     lib.perf_buffer__free.restype = None
 
 
-def init(libbpf_path: Union[str, Path, None] = None) -> None:
+def init(libbpf_path: str | Path | None = None) -> None:
     """Initialize libbpf with optional custom library path.
 
     Call before first use to specify a custom libbpf.so path.
