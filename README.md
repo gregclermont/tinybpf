@@ -91,3 +91,65 @@ Properties: `name`, `type`, `key_size`, `value_size`, `max_entries`, `fd`, `info
 - Linux with kernel 5.8+ (for CO-RE support)
 - libelf (typically pre-installed)
 - Root or `CAP_BPF` capability
+
+## Building on tinybpf
+
+### Compiling eBPF programs
+
+Use the `ghcr.io/gregclermont/tinybpf-compile` Docker image to compile `.bpf.c` files:
+
+```bash
+docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c
+```
+
+Output files are written alongside the sources. Use `-o build/` to specify an output directory.
+
+The image includes libbpf headers and `vmlinux.h` for x86_64 and aarch64. It auto-detects the target architecture.
+
+### CI workflow
+
+Example GitHub Actions workflow to compile and test:
+
+```yaml
+name: CI
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile eBPF programs
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/src \
+            ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c -o build/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf/
+          pip install pytest
+
+      - name: Run tests
+        run: sudo pytest tests/ -v
+```
+
+### Local development on macOS
+
+Since eBPF requires Linux, use [Lima](https://lima-vm.io/) to run a Linux VM:
+
+```bash
+# Create and start an Ubuntu VM
+limactl create --name=ebpf template:ubuntu-24.04
+limactl start ebpf
+
+# Run commands in the VM
+limactl shell ebpf -- sudo pytest /path/to/your/tests -v
+```
+
+You'll need to configure mounts for your project directory. See this project's [Makefile](Makefile) for a complete setup with `lima-create`, `lima-shell`, and automatic mount configuration.
