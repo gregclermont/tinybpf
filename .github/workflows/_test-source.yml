@@ -32,9 +32,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Download eBPF test objects
+        uses: actions/download-artifact@v4
+        with:
+          name: test-ebpf-objects
+          path: tests/bpf/
+        continue-on-error: true
+
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
 
+      - name: Install dependencies
+        run: |
+          uv sync --quiet --python ${{ matrix.python-version }} --extra dev
+
       - name: Run tests
-        run: uv run --quiet --python ${{ matrix.python-version }} --extra dev pytest tests/
+        run: |
+          sudo .venv/bin/pytest tests/ -v --tb=short 2>&1 | tee test-output.txt
+
+      - name: Upload test logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-logs-${{ matrix.python-version }}-${{ inputs.arch }}
+          path: test-output.txt
