@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tinybpf"
 version = "0.0.1"
-description = "Minimal Python library for loading CO-RE eBPF programs"
+description = "Minimal Python library for loading and interacting with eBPF programs"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 classifiers = [

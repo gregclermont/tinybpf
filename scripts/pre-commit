@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Custom pre-commit hook using uv
+# This avoids hardcoded venv paths and auto-installs deps if needed
+#
+# Note: Don't run `pre-commit install` - it will overwrite this hook.
+# If that happens, restore with: make setup-hooks (or copy from scripts/)
+
+exec uv run --extra dev pre-commit run --hook-stage pre-commit

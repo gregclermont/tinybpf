@@ -101,9 +101,10 @@ uv run pytest tests/test_api.py -v
 Pre-commit hooks run the same checks as CI. Install them to catch issues before pushing:
 
 ```bash
-uv sync --extra dev
-uv run pre-commit install
+make setup-hooks
 ```
+
+This installs a custom hook that uses `uv run` instead of a hardcoded venv path. This ensures hooks work in both macOS and Lima (where the Python binary paths differ).
 
 ### Validating Changes
 
@@ -118,8 +119,6 @@ This runs:
 - `ruff` - linting and auto-fixes
 - `ruff-format` - code formatting
 - `mypy` - type checking
-
-The pre-commit hooks use `uv run mypy` to ensure the same mypy version as CI. This avoids version mismatches that can cause different errors locally vs in CI.
 
 **Quick individual checks** (useful during development):
 

@@ -42,6 +42,8 @@ lima-create:
 	limactl start $(LIMA_VM)
 	@echo "Installing uv..."
 	limactl shell $(LIMA_VM) -- bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+	@echo "Configuring uv to use separate venv (avoids conflicts with macOS)..."
+	limactl shell $(LIMA_VM) -- bash -c 'echo "export UV_PROJECT_ENVIRONMENT=/tmp/tinybpf-venv" >> ~/.bashrc'
 	@echo "Lima VM '$(LIMA_VM)' ready. Run 'make test' to test."
 
 lima-delete:
@@ -69,6 +71,11 @@ setup: setup-linux
 test: test-linux
 endif
 
+# Install git hooks (uses uv, avoids venv path issues)
+setup-hooks:
+	cp scripts/pre-commit .git/hooks/pre-commit
+	chmod +x .git/hooks/pre-commit
+
 # Clean compiled objects
 clean:
 	rm -f tests/bpf/*.bpf.o
@@ -93,4 +100,4 @@ typecheck:
 
 check: format-check lint typecheck
 
-.PHONY: compile setup-linux test-linux lima-create lima-delete lima-shell setup-lima test-lima setup test clean lint lint-fix format format-check typecheck check
+.PHONY: compile setup-linux test-linux lima-create lima-delete lima-shell setup-lima test-lima setup test setup-hooks clean lint lint-fix format format-check typecheck check
