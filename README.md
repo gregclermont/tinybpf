@@ -73,6 +73,7 @@ Attach methods:
 - `attach_raw_tracepoint(name)`
 - `attach_uprobe(binary_path, offset=0, pid=-1, retprobe=False)`
 - `attach_uretprobe(binary_path, offset=0, pid=-1)`
+- `attach_xdp(ifindex)` - Attach XDP to network interface
 
 Properties: `name`, `section`, `type`, `fd`, `info`
 

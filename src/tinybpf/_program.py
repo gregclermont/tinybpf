@@ -202,6 +202,25 @@ class BpfProgram:
         """
         return self.attach_uprobe(binary_path, offset, pid, retprobe=True)
 
+    def attach_xdp(self, ifindex: int) -> BpfLink:
+        """Attach XDP program to a network interface.
+
+        Args:
+            ifindex: Network interface index. Use socket.if_nametoindex("eth0")
+                     to convert an interface name to its index.
+
+        Returns:
+            A BpfLink that can be used to manage the attachment.
+
+        Raises:
+            BpfError: If attachment fails.
+        """
+        self._check_open()
+        lib = bindings._get_lib()
+        link = lib.bpf_program__attach_xdp(self._ptr, ifindex)
+        _check_ptr(link, f"attach XDP to interface {ifindex}")
+        return BpfLink(link, f"xdp:if{ifindex}")
+
 
 class ProgramCollection(Mapping[str, BpfProgram]):
     """Collection of BPF programs in an object, accessible by name."""

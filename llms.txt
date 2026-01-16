@@ -38,6 +38,7 @@ prog.attach_tracepoint("category", "name")
 prog.attach_raw_tracepoint("name")
 prog.attach_uprobe(binary, offset=0, pid=-1, retprobe=False)
 prog.attach_uretprobe(binary, offset=0, pid=-1)
+prog.attach_xdp(ifindex)  # XDP on network interface (use socket.if_nametoindex)
 prog.name, prog.section, prog.type, prog.fd, prog.info
 
 # BpfMap - dict-like interface
