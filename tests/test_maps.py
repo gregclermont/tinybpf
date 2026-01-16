@@ -126,6 +126,102 @@ class TestBpfMaps:
             array_map[idx] = (0).to_bytes(8, "little")
 
 
+class TestTypedMapAccess:
+    """Tests for typed map access with auto-conversion."""
+
+    def test_typed_int_keys_and_values(self, test_maps_bpf_path: Path) -> None:
+        """Map with int types auto-converts keys and values."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts", key_type=int, value_type=int)
+
+            # Update with int (no manual conversion needed)
+            hash_map[12345] = 42
+
+            # Lookup returns int (not bytes)
+            result = hash_map[12345]
+            assert result == 42
+            assert isinstance(result, int)
+
+            # Clean up
+            del hash_map[12345]
+
+    def test_typed_iteration(self, test_maps_bpf_path: Path) -> None:
+        """Typed map iteration returns typed keys and values."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts", key_type=int, value_type=int)
+
+            # Insert some entries
+            for i in range(3):
+                hash_map[2000 + i] = i * 10
+
+            # keys() returns ints
+            keys = list(hash_map.keys())
+            assert all(isinstance(k, int) for k in keys)
+            assert 2000 in keys
+
+            # values() returns ints
+            values = list(hash_map.values())
+            assert all(isinstance(v, int) for v in values)
+
+            # items() returns (int, int) tuples
+            items = list(hash_map.items())
+            assert all(isinstance(k, int) and isinstance(v, int) for k, v in items)
+
+            # Clean up
+            for i in range(3):
+                hash_map.delete(2000 + i)
+
+    def test_typed_lookup_returns_none_for_missing(self, test_maps_bpf_path: Path) -> None:
+        """Typed lookup returns None for missing keys."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts", key_type=int, value_type=int)
+            result = hash_map.lookup(99999999)
+            assert result is None
+
+    def test_untyped_map_returns_bytes(self, test_maps_bpf_path: Path) -> None:
+        """Untyped map still returns bytes (backward compatible)."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts")  # No types
+            key = (12345).to_bytes(4, "little")
+            value = (42).to_bytes(8, "little")
+
+            hash_map[key] = value
+            result = hash_map[key]
+
+            assert result == value
+            assert isinstance(result, bytes)
+
+            del hash_map[key]
+
+    def test_partial_typing_key_only(self, test_maps_bpf_path: Path) -> None:
+        """Can specify only key_type."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts", key_type=int)
+
+            hash_map[12345] = (42).to_bytes(8, "little")
+            result = hash_map[12345]
+
+            # Value is still bytes
+            assert isinstance(result, bytes)
+
+            del hash_map[12345]
+
+    def test_partial_typing_value_only(self, test_maps_bpf_path: Path) -> None:
+        """Can specify only value_type."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.map("pid_counts", value_type=int)
+
+            key = (12345).to_bytes(4, "little")
+            hash_map[key] = 42
+            result = hash_map[key]
+
+            # Value is int
+            assert result == 42
+            assert isinstance(result, int)
+
+            del hash_map[key]
+
+
 class TestBpfMapErrors:
     """Tests for BPF map error handling."""
 

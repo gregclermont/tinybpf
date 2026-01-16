@@ -60,8 +60,25 @@ for key, event in obj.maps["events"].items():
 
 - `obj.programs` - Dict-like access to programs by name
 - `obj.maps` - Dict-like access to maps by name
-- `obj.program(name)` / `obj.map(name)` - Get by name
+- `obj.program(name)` - Get program by name
+- `obj.map(name, key_type=, value_type=)` - Get map by name with optional typed access
 - Context manager support (`with` statement)
+
+Typed map access auto-converts keys and values:
+
+```python
+# Without types - returns bytes
+map = obj.map("counters")
+value = map[key.to_bytes(4, "little")]  # bytes
+
+# With types - auto-converts
+map = obj.map("counters", key_type=int, value_type=int)
+value = map[42]  # int
+
+# With ctypes.Structure
+map = obj.map("events", key_type=int, value_type=Event)
+event = map[pid]  # Event instance
+```
 
 ### BpfProgram
 

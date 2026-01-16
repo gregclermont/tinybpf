@@ -13,7 +13,7 @@ Example:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from tinybpf._libbpf import bindings
 from tinybpf._map import BpfMap, MapCollection
@@ -22,6 +22,9 @@ from tinybpf._types import _check_err, _check_ptr
 
 if TYPE_CHECKING:
     from types import TracebackType
+
+KT = TypeVar("KT")
+VT = TypeVar("VT")
 
 
 class BpfObject:
@@ -115,19 +118,76 @@ class BpfObject:
         """
         return self._programs[name]
 
-    def map(self, name: str) -> BpfMap[Any, Any]:
-        """Get a map by name.
+    @overload
+    def map(self, name: str) -> BpfMap[Any, Any]: ...
+
+    @overload
+    def map(
+        self,
+        name: str,
+        *,
+        key_type: type[KT],
+        value_type: type[VT],
+    ) -> BpfMap[KT, VT]: ...
+
+    @overload
+    def map(
+        self,
+        name: str,
+        *,
+        key_type: type[KT],
+    ) -> BpfMap[KT, Any]: ...
+
+    @overload
+    def map(
+        self,
+        name: str,
+        *,
+        value_type: type[VT],
+    ) -> BpfMap[Any, VT]: ...
+
+    def map(
+        self,
+        name: str,
+        *,
+        key_type: type[KT] | None = None,
+        value_type: type[VT] | None = None,
+    ) -> BpfMap[KT, VT]:
+        """Get a map by name, optionally with typed access.
 
         Args:
             name: The map name.
+            key_type: Type for keys (int or ctypes.Structure subclass).
+                      If specified, keys are auto-converted on read.
+            value_type: Type for values (int or ctypes.Structure subclass).
+                        If specified, values are auto-converted on read.
 
         Returns:
-            The BpfMap instance.
+            The BpfMap instance. If types are specified, returns a typed
+            view that auto-converts on read operations.
 
         Raises:
             KeyError: If map not found.
+
+        Example:
+            # Untyped (returns bytes)
+            map = obj.map("counters")
+            raw = map[key]  # bytes
+
+            # Typed (auto-converts)
+            map = obj.map("counters", key_type=int, value_type=int)
+            count = map[42]  # returns int
         """
-        return self._maps[name]
+        base_map = self._maps[name]
+        if key_type is None and value_type is None:
+            return base_map
+        # Return a new BpfMap with types set (shares same pointer)
+        return BpfMap(
+            base_map._ptr,
+            self,
+            key_type=key_type,
+            value_type=value_type,
+        )
 
     def close(self) -> None:
         """Close and release the BPF object resources."""
