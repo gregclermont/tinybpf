@@ -21,7 +21,9 @@ with tinybpf.load("program.bpf.o") as obj:
     obj.programs  # Dict-like: ProgramCollection
     obj.maps      # Dict-like: MapCollection
     obj.program("name")  # -> BpfProgram
-    obj.map("name")      # -> BpfMap
+    obj.map("name")      # -> BpfMap (returns bytes)
+    obj.map("name", key_type=int, value_type=int)  # -> BpfMap with auto-conversion
+    obj.map("name", value_type=Event)  # -> BpfMap[Any, Event] for ctypes.Structure
 
 # Open pinned map from bpffs
 with tinybpf.open_pinned_map("/sys/fs/bpf/my_map") as map:
