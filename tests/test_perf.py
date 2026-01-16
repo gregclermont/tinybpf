@@ -123,3 +123,56 @@ class TestBpfPerfBuffer:
                 assert "open" in repr(pb)
             # Perf buffer should be closed after with block
             assert "closed" in repr(pb)
+
+
+class TestBpfPerfBufferTyped:
+    """Tests for typed perf buffer events."""
+
+    def test_perfbuf_typed_callback(self, perf_bpf_path: Path) -> None:
+        """Typed callback receives ctypes.Structure events."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [  # noqa: RUF012
+                ("pid", ctypes.c_uint32),
+                ("cpu", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events: list[tuple[int, Event]] = []
+
+        def callback(cpu: int, event: Event) -> None:
+            events.append((cpu, event))
+
+        with tinybpf.load(perf_bpf_path) as obj:
+            with obj.program("trace_getpid").attach():
+                with tinybpf.BpfPerfBuffer(obj.map("events"), callback, event_type=Event) as pb:
+                    os.getpid()
+                    pb.poll(timeout_ms=100)
+
+        assert len(events) >= 1
+        cpu, event = events[0]
+        assert isinstance(cpu, int)
+        assert isinstance(event, Event)
+        assert event.pid > 0
+        assert event.cpu >= 0
+        assert len(event.comm) > 0
+
+    def test_perfbuf_default_bytes_backward_compat(self, perf_bpf_path: Path) -> None:
+        """Default (no event_type) returns bytes for backward compat."""
+        events: list[tuple[int, bytes]] = []
+
+        def callback(cpu: int, data: bytes) -> None:
+            events.append((cpu, data))
+
+        with tinybpf.load(perf_bpf_path) as obj:
+            with obj.program("trace_getpid").attach():
+                with tinybpf.BpfPerfBuffer(obj.map("events"), callback) as pb:
+                    os.getpid()
+                    pb.poll(timeout_ms=100)
+
+        assert len(events) >= 1
+        cpu, data = events[0]
+        assert isinstance(cpu, int)
+        assert isinstance(data, bytes)
+        assert len(data) >= 24  # pid + cpu + comm

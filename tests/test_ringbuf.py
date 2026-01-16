@@ -376,3 +376,188 @@ class TestBpfRingBuffer:
             with pytest.raises(tinybpf.BpfError, match="callback-mode"):
                 list(rb)
             rb.close()
+
+
+class TestBpfRingBufferTyped:
+    """Tests for typed ring buffer events."""
+
+    def test_ringbuf_typed_callback(self, ringbuf_bpf_path: Path) -> None:
+        """Typed callback receives ctypes.Structure events."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [  # noqa: RUF012
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events: list[Event] = []
+
+        def callback(event: Event) -> int:
+            events.append(event)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.map("events"), callback, event_type=Event)
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+                rb.close()
+
+        assert len(events) >= 1
+        event = events[0]
+        assert isinstance(event, Event)
+        assert event.pid > 0
+        assert event.tid > 0
+        # comm should contain process name
+        assert len(event.comm) > 0
+
+    def test_ringbuf_typed_iterator(self, ringbuf_bpf_path: Path) -> None:
+        """Typed iterator yields ctypes.Structure events."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [  # noqa: RUF012
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.map("events"), event_type=Event)
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+
+                events = list(rb)  # Sync iteration
+                assert len(events) >= 1
+                event = events[0]
+                assert isinstance(event, Event)
+                assert event.pid > 0
+
+                rb.close()
+
+    def test_ringbuf_default_bytes_backward_compat(self, ringbuf_bpf_path: Path) -> None:
+        """Default (no event_type) returns bytes for backward compat."""
+        events: list[bytes] = []
+
+        def callback(data: bytes) -> int:
+            events.append(data)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.map("events"), callback)
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+                rb.close()
+
+        assert len(events) >= 1
+        assert isinstance(events[0], bytes)
+        assert len(events[0]) == 24  # pid + tid + comm
+
+    def test_ringbuf_typed_memoryview_incompatible(self, ringbuf_bpf_path: Path) -> None:
+        """as_memoryview=True is incompatible with event_type."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [("pid", ctypes.c_uint32)]  # noqa: RUF012
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with pytest.raises(tinybpf.BpfError, match="Cannot use as_memoryview"):
+                tinybpf.BpfRingBuffer(
+                    obj.map("events"),
+                    lambda d: 0,
+                    as_memoryview=True,
+                    event_type=Event,
+                )
+
+    def test_ringbuf_multi_map_callback_different_types(self, ringbuf_bpf_path: Path) -> None:
+        """Multi-map callback mode can have different event types per map."""
+        import ctypes
+
+        class Event1(ctypes.Structure):
+            _fields_ = [  # noqa: RUF012
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        class Event2(ctypes.Structure):
+            _fields_ = [  # noqa: RUF012
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events1: list[Event1] = []
+        events2: list[Event2] = []
+
+        def callback1(event: Event1) -> int:
+            events1.append(event)
+            return 0
+
+        def callback2(event: Event2) -> int:
+            events2.append(event)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                with obj.program("trace_getpid").attach():
+                    rb = tinybpf.BpfRingBuffer()
+                    rb.add(obj.map("events"), callback1, event_type=Event1)
+                    rb.add(obj.map("events2"), callback2, event_type=Event2)
+                    with rb:
+                        subprocess.run(["/bin/true"], check=True)
+                        os.getpid()
+                        rb.poll(timeout_ms=100)
+
+        assert len(events1) >= 1
+        assert len(events2) >= 1
+        assert isinstance(events1[0], Event1)
+        assert isinstance(events2[0], Event2)
+
+    def test_ringbuf_multi_map_iterator_same_type(self, ringbuf_bpf_path: Path) -> None:
+        """Multi-map iterator mode requires same event type for all maps."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [  # noqa: RUF012
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                with obj.program("trace_getpid").attach():
+                    rb = tinybpf.BpfRingBuffer()
+                    rb.add(obj.map("events"), event_type=Event)
+                    rb.add(obj.map("events2"), event_type=Event)
+
+                    subprocess.run(["/bin/true"], check=True)
+                    os.getpid()
+                    rb.poll(timeout_ms=100)
+
+                    events = list(rb)
+                    assert len(events) >= 2
+                    assert all(isinstance(e, Event) for e in events)
+                    rb.close()
+
+    def test_ringbuf_multi_map_iterator_type_mismatch_error(self, ringbuf_bpf_path: Path) -> None:
+        """Multi-map iterator mode raises error on mismatched event types."""
+        import ctypes
+
+        class Event1(ctypes.Structure):
+            _fields_ = [("pid", ctypes.c_uint32)]  # noqa: RUF012
+
+        class Event2(ctypes.Structure):
+            _fields_ = [("tid", ctypes.c_uint32)]  # noqa: RUF012
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer()
+            rb.add(obj.map("events"), event_type=Event1)
+            with pytest.raises(tinybpf.BpfError, match="Cannot mix event types"):
+                rb.add(obj.map("events2"), event_type=Event2)
+            rb.close()

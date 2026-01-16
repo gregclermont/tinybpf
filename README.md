@@ -127,6 +127,21 @@ rb.poll(timeout_ms=1000)
 - Iterator mode: omit callback, use `for data in rb.poll_iter()`
 - Context manager support
 
+Typed events with auto-conversion:
+
+```python
+class Event(ctypes.Structure):
+    _fields_ = [("pid", ctypes.c_uint32), ("comm", ctypes.c_char * 16)]
+
+# Callback receives Event instances
+rb = BpfRingBuffer(obj.map("events"), handle, event_type=Event)
+
+# Iterator mode also supports typed events
+rb = BpfRingBuffer(obj.map("events"), event_type=Event)
+for event in rb:  # event is Event, not bytes
+    print(event.pid)
+```
+
 ### BpfPerfBuffer
 
 Stream events from `BPF_MAP_TYPE_PERF_EVENT_ARRAY` maps:
@@ -140,6 +155,18 @@ pb.poll(timeout_ms=1000)
 - `pb.poll(timeout_ms)` - Poll for events
 - `pb.consume()` - Process available events without waiting
 - Context manager support
+
+Typed events with auto-conversion:
+
+```python
+class Event(ctypes.Structure):
+    _fields_ = [("pid", ctypes.c_uint32), ("comm", ctypes.c_char * 16)]
+
+def handle(cpu: int, event: Event) -> None:
+    print(cpu, event.pid)
+
+pb = BpfPerfBuffer(obj.map("events"), handle, event_type=Event)
+```
 
 ### BpfLink
 
