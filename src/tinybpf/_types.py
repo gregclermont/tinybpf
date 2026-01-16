@@ -13,9 +13,11 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from tinybpf._libbpf import bindings
+
+T = TypeVar("T")
 
 
 class BpfError(Exception):
@@ -150,15 +152,18 @@ class ProgramInfo:
 
 
 @dataclass(frozen=True)
-class RingBufferEvent:
+class RingBufferEvent(Generic[T]):
     """Event from a ring buffer with source map information.
 
     Used with BpfRingBuffer.events() for multi-map ring buffers where
     you need to identify which map each event came from.
+
+    The data field is typed according to the event_type parameter
+    passed to BpfRingBuffer (defaults to bytes).
     """
 
     map_name: str
-    data: bytes
+    data: T
 
 
 def _check_ptr(ptr: Any, operation: str) -> None:
@@ -181,3 +186,20 @@ def _check_err(ret: int, operation: str) -> None:
         err_abs = abs(ret)
         msg = bindings.libbpf_strerror(err_abs)
         raise BpfError(f"{operation} failed: {msg}", errno=err_abs)
+
+
+def _from_event_bytes(data: bytes, event_type: type[T]) -> T:
+    """Convert bytes to event type (ctypes.Structure or bytes passthrough).
+
+    Args:
+        data: Raw event bytes from ring buffer or perf buffer.
+        event_type: Target type (bytes or a ctypes.Structure subclass).
+
+    Returns:
+        Event data converted to the specified type.
+    """
+    if event_type is bytes:
+        return data  # type: ignore[return-value]
+    # ctypes.Structure - cast to Any to access from_buffer_copy
+    struct_type: Any = event_type
+    return struct_type.from_buffer_copy(data)

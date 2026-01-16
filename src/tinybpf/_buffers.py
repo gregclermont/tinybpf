@@ -10,10 +10,17 @@ from __future__ import annotations
 import asyncio
 import ctypes
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, overload
 
 from tinybpf._libbpf import bindings
-from tinybpf._types import BpfError, BpfMapType, RingBufferEvent, _check_err, _check_ptr
+from tinybpf._types import (
+    BpfError,
+    BpfMapType,
+    RingBufferEvent,
+    _check_err,
+    _check_ptr,
+    _from_event_bytes,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -22,8 +29,10 @@ if TYPE_CHECKING:
     from tinybpf._map import BpfMap
     from tinybpf._object import BpfObject
 
+T = TypeVar("T")
 
-class BpfRingBuffer:
+
+class BpfRingBuffer(Generic[T]):
     """Ring buffer consumer for BPF programs.
 
     Ring buffers (BPF_MAP_TYPE_RINGBUF, kernel 5.8+) are the modern
@@ -54,13 +63,43 @@ class BpfRingBuffer:
             ...
 
     Modes cannot be mixed - all maps must use callbacks or none.
+
+    **Typed events**: Use event_type to auto-convert events to ctypes.Structure:
+        class Event(ctypes.Structure):
+            _fields_ = [("pid", c_uint32), ("comm", c_char * 16)]
+
+        rb = BpfRingBuffer(obj.map("events"), handle, event_type=Event)
+        # callback receives Event instances instead of bytes
+
+    In iterator mode, all maps must use the same event_type. For different
+    event types per map, use callback mode instead.
     """
 
+    @overload
     def __init__(
         self,
         map: BpfMap[Any, Any] | None = None,
         callback: Callable[[bytes], int] | Callable[[memoryview], int] | None = None,
         as_memoryview: bool = False,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        map: BpfMap[Any, Any] | None = None,
+        callback: Callable[[T], int] | None = None,
+        as_memoryview: bool = False,
+        *,
+        event_type: type[T],
+    ) -> None: ...
+
+    def __init__(
+        self,
+        map: BpfMap[Any, Any] | None = None,
+        callback: Callable[[Any], int] | None = None,
+        as_memoryview: bool = False,
+        *,
+        event_type: type[Any] = bytes,
     ) -> None:
         """Create ring buffer consumer.
 
@@ -91,10 +130,14 @@ class BpfRingBuffer:
                      WARNING: The memoryview is only valid during callback
                      execution. To keep data beyond the callback, copy it:
                      kept = bytes(data)
+            event_type: Type for automatic event conversion. Pass a
+                     ctypes.Structure subclass to have events auto-converted.
+                     Defaults to bytes (no conversion). Cannot be combined
+                     with as_memoryview=True.
 
         Raises:
             ValueError: If callback is provided without map.
-            BpfError: If as_memoryview=True without callback.
+            BpfError: If as_memoryview=True without callback or with event_type.
         """
         # Set _closed early so __del__ works if __init__ raises
         self._closed = True
@@ -106,6 +149,10 @@ class BpfRingBuffer:
         # Validate: as_memoryview requires callback
         if as_memoryview and callback is None:
             raise BpfError("as_memoryview=True requires a callback")
+
+        # Validate: as_memoryview and event_type are mutually exclusive
+        if as_memoryview and event_type is not bytes:
+            raise BpfError("Cannot use as_memoryview=True with event_type")
 
         self._ptr: Any = None  # Lazy init on first add()
         self._maps: list[BpfMap[Any, Any]] = []
@@ -120,19 +167,44 @@ class BpfRingBuffer:
         self._as_memoryview = as_memoryview
         self._memoryview_mode: bool | None = None  # Track consistency across add() calls
 
+        # Event type tracking for typed events
+        self._event_type: type[Any] = event_type
+        # Per-map event types for callback mode (callback per map can have different types)
+        self._per_map_event_types: dict[str, type[Any]] = {}
+
         # Event queue for iterator mode: (map_name, data) tuples
         self._event_queue: deque[tuple[str, bytes]] = deque()
 
         self._closed = False
 
         if map is not None:
-            self.add(map, callback, as_memoryview=as_memoryview)
+            self.add(map, callback, as_memoryview=as_memoryview, event_type=event_type)
 
+    @overload
     def add(
         self,
         map: BpfMap[Any, Any],
         callback: Callable[[bytes], int] | Callable[[memoryview], int] | None = None,
         as_memoryview: bool | None = None,
+    ) -> None: ...
+
+    @overload
+    def add(
+        self,
+        map: BpfMap[Any, Any],
+        callback: Callable[[T], int] | None = None,
+        as_memoryview: bool | None = None,
+        *,
+        event_type: type[T],
+    ) -> None: ...
+
+    def add(  # noqa: PLR0912
+        self,
+        map: BpfMap[Any, Any],
+        callback: Callable[[Any], int] | None = None,
+        as_memoryview: bool | None = None,
+        *,
+        event_type: type[Any] | None = None,
     ) -> None:
         """Add a ring buffer map to this consumer.
 
@@ -144,6 +216,10 @@ class BpfRingBuffer:
             as_memoryview: If True, callback receives memoryview instead of bytes.
                      If None, uses the instance default from constructor.
                      See __init__ docstring for full details on when this helps.
+            event_type: Type for automatic event conversion. Pass a
+                     ctypes.Structure subclass to have events auto-converted.
+                     If None, uses the instance default from constructor.
+                     In iterator mode, all maps must use the same event_type.
 
         Raises:
             BpfError: If ring buffer is closed, map type is wrong,
@@ -157,12 +233,19 @@ class BpfRingBuffer:
         if map in self._maps:
             raise BpfError(f"Map '{map.name}' already added to this ring buffer")
 
+        # Determine event_type (use instance default if not specified)
+        use_event_type = event_type if event_type is not None else self._event_type
+
         # Determine memoryview mode (use instance default if not specified)
         use_memoryview = as_memoryview if as_memoryview is not None else self._as_memoryview
 
         # Memoryview mode requires callback
         if use_memoryview and callback is None:
             raise BpfError("as_memoryview=True requires a callback")
+
+        # as_memoryview and event_type are mutually exclusive
+        if use_memoryview and use_event_type is not bytes:
+            raise BpfError("Cannot use as_memoryview=True with event_type")
 
         # Validate memoryview mode consistency
         if self._memoryview_mode is not None and self._memoryview_mode != use_memoryview:
@@ -180,6 +263,21 @@ class BpfRingBuffer:
             )
         self._mode = new_mode
 
+        # In iterator mode, all maps must use the same event_type
+        if new_mode == "iterator":
+            # Check consistency: if we have maps already, event_type must match
+            if self._maps and self._event_type != use_event_type:
+                raise BpfError(
+                    f"Cannot mix event types in iterator mode; "
+                    f"ring buffer uses {self._event_type.__name__}, got {use_event_type.__name__}. "
+                    f"Use callback mode for different event types per map."
+                )
+            # Update instance event_type for iterator mode
+            self._event_type = use_event_type
+        else:
+            # Callback mode: track per-map event types
+            self._per_map_event_types[map.name] = use_event_type
+
         # Create ctypes callback wrapper
         if callback is not None:
             if use_memoryview:
@@ -192,21 +290,24 @@ class BpfRingBuffer:
                         array_type = ctypes.c_char * size
                         array_ptr = ctypes.cast(data, ctypes.POINTER(array_type))
                         mv = memoryview(array_ptr.contents).cast("B")
-                        return callback(mv)  # type: ignore[arg-type]
+                        return callback(mv)
                     except BaseException as e:
                         self._stored_exception = e
                         return -1  # Stop polling
             else:
-                # Bytes mode: copy data and pass bytes to callback
+                # Bytes/typed mode: copy data and optionally convert
+                map_event_type = use_event_type  # Capture in closure
+
                 def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
                     try:
                         event_data = ctypes.string_at(data, size)
-                        return callback(event_data)  # type: ignore[arg-type]
+                        typed_event = _from_event_bytes(event_data, map_event_type)
+                        return callback(typed_event)
                     except BaseException as e:
                         self._stored_exception = e
                         return -1  # Stop polling
         else:
-            # Iterator mode: queue events with map name
+            # Iterator mode: queue events with map name (conversion happens at iteration)
             map_name = map.name  # Capture in closure
 
             def _callback_wrapper(ctx: Any, data: Any, size: int) -> int:
@@ -381,13 +482,13 @@ class BpfRingBuffer:
             except (ValueError, KeyError):
                 pass  # Already removed
 
-    def __aiter__(self) -> _AsyncRingBufferIterator:
+    def __aiter__(self) -> _AsyncRingBufferIterator[T]:
         """Return async iterator over events.
 
         Only available in iterator mode (maps added without callbacks).
 
         Returns:
-            Async iterator yielding event data as bytes.
+            Async iterator yielding event data (type depends on event_type).
 
         Raises:
             BpfError: If ring buffer is in callback mode or no maps added.
@@ -401,7 +502,7 @@ class BpfRingBuffer:
             raise BpfError("No maps added to ring buffer")
         return _AsyncRingBufferIterator(self)
 
-    def __iter__(self) -> Iterator[bytes]:
+    def __iter__(self) -> Iterator[T]:
         """Iterate over queued events synchronously.
 
         Only available in iterator mode (maps added without callbacks).
@@ -414,7 +515,7 @@ class BpfRingBuffer:
                 process(event)
 
         Yields:
-            Event data as bytes.
+            Event data (type depends on event_type parameter).
 
         Raises:
             BpfError: If ring buffer is in callback mode.
@@ -426,9 +527,9 @@ class BpfRingBuffer:
             )
         while self._event_queue:
             _map_name, data = self._event_queue.popleft()
-            yield data
+            yield _from_event_bytes(data, self._event_type)
 
-    def events(self) -> _TaggedRingBufferIterator:
+    def events(self) -> _TaggedRingBufferIterator[T]:
         """Return async iterator yielding tagged events.
 
         Each event includes the source map name, useful for multi-map
@@ -436,7 +537,7 @@ class BpfRingBuffer:
         came from.
 
         Returns:
-            Async iterator yielding RingBufferEvent objects.
+            Async iterator yielding RingBufferEvent[T] objects.
 
         Raises:
             BpfError: If in callback mode or no maps added.
@@ -468,7 +569,7 @@ class BpfRingBuffer:
                 lib.ring_buffer__free(self._ptr)
             self._closed = True
 
-    def __enter__(self) -> BpfRingBuffer:
+    def __enter__(self) -> BpfRingBuffer[T]:
         return self
 
     def __exit__(
@@ -479,7 +580,7 @@ class BpfRingBuffer:
     ) -> None:
         self.close()
 
-    async def __aenter__(self) -> BpfRingBuffer:
+    async def __aenter__(self) -> BpfRingBuffer[T]:
         return self
 
     async def __aexit__(
@@ -506,16 +607,16 @@ class BpfRingBuffer:
             return f"<BpfRingBuffer maps=[{names}]{mode} {status}>"
 
 
-class _AsyncRingBufferIterator:
+class _AsyncRingBufferIterator(Generic[T]):
     """Async iterator for BpfRingBuffer events."""
 
-    def __init__(self, rb: BpfRingBuffer) -> None:
+    def __init__(self, rb: BpfRingBuffer[T]) -> None:
         self._rb = rb
 
-    def __aiter__(self) -> _AsyncRingBufferIterator:
+    def __aiter__(self) -> _AsyncRingBufferIterator[T]:
         return self
 
-    async def __anext__(self) -> bytes:
+    async def __anext__(self) -> T:
         """Get next event, waiting if necessary."""
         rb = self._rb
 
@@ -525,7 +626,7 @@ class _AsyncRingBufferIterator:
         # Return queued event if available (discard map_name for backward compat)
         if rb._event_queue:
             _map_name, data = rb._event_queue.popleft()
-            return data
+            return _from_event_bytes(data, rb._event_type)
 
         # Wait for events
         while True:
@@ -534,22 +635,22 @@ class _AsyncRingBufferIterator:
             # Check for events after poll
             if rb._event_queue:
                 _map_name, data = rb._event_queue.popleft()
-                return data
+                return _from_event_bytes(data, rb._event_type)
 
             # poll_async returned 0 events, could be spurious wakeup
             # Continue waiting
 
 
-class _TaggedRingBufferIterator:
+class _TaggedRingBufferIterator(Generic[T]):
     """Async iterator yielding tagged RingBufferEvent objects."""
 
-    def __init__(self, rb: BpfRingBuffer) -> None:
+    def __init__(self, rb: BpfRingBuffer[T]) -> None:
         self._rb = rb
 
-    def __aiter__(self) -> _TaggedRingBufferIterator:
+    def __aiter__(self) -> _TaggedRingBufferIterator[T]:
         return self
 
-    async def __anext__(self) -> RingBufferEvent:
+    async def __anext__(self) -> RingBufferEvent[T]:
         """Get next tagged event, waiting if necessary."""
         rb = self._rb
 
@@ -559,7 +660,8 @@ class _TaggedRingBufferIterator:
         # Return queued event if available
         if rb._event_queue:
             map_name, data = rb._event_queue.popleft()
-            return RingBufferEvent(map_name=map_name, data=data)
+            typed_data = _from_event_bytes(data, rb._event_type)
+            return RingBufferEvent(map_name=map_name, data=typed_data)
 
         # Wait for events
         while True:
@@ -568,13 +670,14 @@ class _TaggedRingBufferIterator:
             # Check for events after poll
             if rb._event_queue:
                 map_name, data = rb._event_queue.popleft()
-                return RingBufferEvent(map_name=map_name, data=data)
+                typed_data = _from_event_bytes(data, rb._event_type)
+                return RingBufferEvent(map_name=map_name, data=typed_data)
 
             # poll_async returned 0 events, could be spurious wakeup
             # Continue waiting
 
 
-class BpfPerfBuffer:
+class BpfPerfBuffer(Generic[T]):
     """Perf buffer consumer for BPF programs.
 
     Perf buffers (BPF_MAP_TYPE_PERF_EVENT_ARRAY) are available on kernel 4.4+
@@ -591,14 +694,45 @@ class BpfPerfBuffer:
             with obj.program("trace").attach():
                 with BpfPerfBuffer(obj.map("events"), handle_event, handle_lost) as pb:
                     pb.poll(timeout_ms=1000)
+
+    **Typed events**: Use event_type to auto-convert events to ctypes.Structure:
+        class Event(ctypes.Structure):
+            _fields_ = [("pid", c_uint32), ("comm", c_char * 16)]
+
+        def handle(cpu: int, event: Event) -> None:
+            print(cpu, event.pid)
+
+        pb = BpfPerfBuffer(obj.map("events"), handle, event_type=Event)
     """
 
+    @overload
     def __init__(
         self,
         map: BpfMap[Any, Any],
         sample_callback: Callable[[int, bytes], None],
         lost_callback: Callable[[int, int], None] | None = None,
         page_count: int = 8,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        map: BpfMap[Any, Any],
+        sample_callback: Callable[[int, T], None],
+        lost_callback: Callable[[int, int], None] | None = None,
+        page_count: int = 8,
+        *,
+        event_type: type[T],
+    ) -> None: ...
+
+    def __init__(
+        self,
+        map: BpfMap[Any, Any],
+        sample_callback: Callable[[int, Any], None],
+        lost_callback: Callable[[int, int], None] | None = None,
+        page_count: int = 8,
+        *,
+        event_type: type[Any] = bytes,
     ) -> None:
         """Create perf buffer consumer.
 
@@ -612,6 +746,9 @@ class BpfPerfBuffer:
             lost_callback: Called with (cpu, lost_count) when events are dropped.
                           If None, lost events are silently ignored.
             page_count: Per-CPU buffer size in pages (must be power of 2).
+            event_type: Type for automatic event conversion. Pass a
+                     ctypes.Structure subclass to have events auto-converted.
+                     Defaults to bytes (no conversion).
 
         Raises:
             BpfError: If map is not a perf event array type.
@@ -630,13 +767,15 @@ class BpfPerfBuffer:
         self._obj = map._obj  # For use-after-close detection
         self._user_sample_callback = sample_callback
         self._user_lost_callback = lost_callback
+        self._event_type = event_type
         self._stored_exception: BaseException | None = None
 
         # Create ctypes callback wrappers
         def _sample_wrapper(ctx: Any, cpu: int, data: Any, size: int) -> None:
             try:
                 event_data = ctypes.string_at(data, size)
-                self._user_sample_callback(cpu, event_data)
+                typed_event = _from_event_bytes(event_data, self._event_type)
+                self._user_sample_callback(cpu, typed_event)
             except BaseException as e:
                 self._stored_exception = e
 
@@ -720,7 +859,7 @@ class BpfPerfBuffer:
             lib.perf_buffer__free(self._ptr)
             self._closed = True
 
-    def __enter__(self) -> BpfPerfBuffer:
+    def __enter__(self) -> BpfPerfBuffer[T]:
         return self
 
     def __exit__(

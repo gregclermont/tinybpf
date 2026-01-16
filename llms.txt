@@ -60,15 +60,20 @@ map.name, map.type, map.key_size, map.value_size, map.max_entries, map.fd, map.i
 
 # BpfRingBuffer - stream events from BPF_MAP_TYPE_RINGBUF
 rb = BpfRingBuffer(map, callback=lambda data: ...)  # callback receives bytes
+rb = BpfRingBuffer(map, callback, event_type=Event)  # callback receives Event (ctypes.Structure)
 rb = BpfRingBuffer()  # empty, then rb.add(map, callback) for multi-map
+rb.add(map, callback, event_type=Event)  # add map with typed events
 rb.poll(timeout_ms=-1)    # poll and invoke callbacks, returns event count
 rb.consume()              # process available events without waiting
 await rb.poll_async()     # async polling
-async for event in rb     # async iteration (RingBufferEvent with .map_name, .data)
-for data in rb.poll_iter(timeout_ms)  # sync iteration (omit callback)
+async for event in rb     # async iteration (type depends on event_type)
+for event in rb           # sync iteration after poll() (type depends on event_type)
+rb.events()               # async iterator yielding RingBufferEvent[T] with .map_name, .data
+# Note: iterator mode requires same event_type for all maps; use callback mode for different types per map
 
 # BpfPerfBuffer - stream events from BPF_MAP_TYPE_PERF_EVENT_ARRAY
 pb = BpfPerfBuffer(map, sample_callback=lambda cpu, data: ..., lost_callback=None)
+pb = BpfPerfBuffer(map, sample_callback, event_type=Event)  # callback receives (cpu, Event)
 pb.poll(timeout_ms=-1)    # poll and invoke callbacks
 pb.consume()              # process available events without waiting
 
