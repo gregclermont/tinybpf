@@ -1,6 +1,6 @@
 # tinybpf
 
-Minimal Python library for loading pre-compiled CO-RE eBPF programs. Uses ctypes bindings to bundled libbpf.
+Minimal Python library for loading compiled eBPF programs. Uses ctypes bindings to bundled libbpf.
 
 ## Install
 
@@ -9,7 +9,7 @@ uv add tinybpf --index https://gregclermont.github.io/tinybpf
 pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf
 ```
 
-Requires Linux 5.8+, libelf, root/CAP_BPF. Wheels: manylinux_2_28 x86_64/aarch64.
+Requires Linux 5.8+ (for ring buffers; basic features work on older kernels), libelf, root/CAP_BPF. Wheels: manylinux_2_28 x86_64/aarch64.
 
 ## API
 
@@ -18,11 +18,17 @@ import tinybpf
 
 # Load eBPF object file
 with tinybpf.load("program.bpf.o") as obj:
-    # Access programs and maps
     obj.programs  # Dict-like: ProgramCollection
     obj.maps      # Dict-like: MapCollection
     obj.program("name")  # -> BpfProgram
     obj.map("name")      # -> BpfMap
+
+# Open pinned map from bpffs
+with tinybpf.open_pinned_map("/sys/fs/bpf/my_map") as map:
+    ...
+
+# Optional: use custom libbpf.so (call before other functions)
+tinybpf.init("/path/to/libbpf.so")
 
 # BpfProgram - attach methods return BpfLink
 prog.attach()                              # Auto-attach by section
@@ -43,9 +49,25 @@ map.lookup(key)     # -> value or None
 map.update(key, value, flags=BPF_ANY)  # flags: BPF_ANY|BPF_NOEXIST|BPF_EXIST
 map.delete(key)     # -> bool
 map.keys(), map.values(), map.items()  # iterators
+map.pin("/sys/fs/bpf/path")   # pin to bpffs (object-owned maps only)
+map.unpin("/sys/fs/bpf/path") # remove pin
 map.name, map.type, map.key_size, map.value_size, map.max_entries, map.fd, map.info
 
 # Keys/values: bytes, int, or ctypes.Structure
+
+# BpfRingBuffer - stream events from BPF_MAP_TYPE_RINGBUF
+rb = BpfRingBuffer(map, callback=lambda data: ...)  # callback receives bytes
+rb = BpfRingBuffer()  # empty, then rb.add(map, callback) for multi-map
+rb.poll(timeout_ms=-1)    # poll and invoke callbacks, returns event count
+rb.consume()              # process available events without waiting
+await rb.poll_async()     # async polling
+async for event in rb     # async iteration (RingBufferEvent with .map_name, .data)
+for data in rb.poll_iter(timeout_ms)  # sync iteration (omit callback)
+
+# BpfPerfBuffer - stream events from BPF_MAP_TYPE_PERF_EVENT_ARRAY
+pb = BpfPerfBuffer(map, sample_callback=lambda cpu, data: ..., lost_callback=None)
+pb.poll(timeout_ms=-1)    # poll and invoke callbacks
+pb.consume()              # process available events without waiting
 
 # BpfLink
 link.destroy()  # detach program
@@ -56,9 +78,9 @@ tinybpf.version()         # package version
 tinybpf.libbpf_version()  # bundled libbpf version
 
 # Types
-BpfObject, BpfProgram, BpfMap, BpfLink
+BpfObject, BpfProgram, BpfMap, BpfLink, BpfRingBuffer, BpfPerfBuffer
 BpfMapType, BpfProgType  # IntEnums
-MapInfo, ProgramInfo     # dataclasses
+MapInfo, ProgramInfo, RingBufferEvent  # dataclasses
 BpfError                 # exception with .errno
 BPF_ANY, BPF_NOEXIST, BPF_EXIST  # map update flags
 ```

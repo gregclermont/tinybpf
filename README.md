@@ -1,10 +1,10 @@
 # tinybpf
 
-Minimal Python library for loading and interacting with pre-compiled CO-RE eBPF programs.
+Minimal Python library for loading and interacting with compiled eBPF programs.
 
 - Pure Python (ctypes bindings to bundled libbpf)
 - No build dependencies, no runtime dependencies except libelf
-- Dict-like map access, context managers for cleanup
+- Dict-like map access, ring buffer streaming, context managers
 
 ## Install
 
@@ -53,6 +53,8 @@ for key, event in obj.maps["events"].items():
 ### Loading
 
 - `tinybpf.load(path)` - Load a `.bpf.o` file, returns `BpfObject`
+- `tinybpf.open_pinned_map(path)` - Open a pinned map from bpffs
+- `tinybpf.init(libbpf_path)` - Use custom libbpf.so (optional, call before other functions)
 
 ### BpfObject
 
@@ -82,9 +84,44 @@ Dict-like interface:
 - `map.keys()`, `map.values()`, `map.items()`
 - `map.lookup(key)`, `map.update(key, value, flags)`, `map.delete(key)`
 
+Pinning (for maps from `BpfObject`):
+- `map.pin(path)` - Pin to bpffs
+- `map.unpin(path)` - Remove pin
+
 Keys/values: `bytes`, `int`, or `ctypes.Structure`
 
 Properties: `name`, `type`, `key_size`, `value_size`, `max_entries`, `fd`, `info`
+
+### BpfRingBuffer
+
+Stream events from `BPF_MAP_TYPE_RINGBUF` maps:
+
+```python
+rb = BpfRingBuffer(obj.map("events"), callback=lambda data: print(len(data)))
+rb.poll(timeout_ms=1000)
+```
+
+- `BpfRingBuffer(map, callback)` - Create with callback receiving `bytes`
+- `BpfRingBuffer()` then `rb.add(map)` - Multi-map support
+- `rb.poll(timeout_ms)` - Poll for events, invoke callbacks
+- `rb.consume()` - Process available events without waiting
+- Async support: `await rb.poll_async()`, `async for event in rb`
+- Iterator mode: omit callback, use `for data in rb.poll_iter()`
+- Context manager support
+
+### BpfPerfBuffer
+
+Stream events from `BPF_MAP_TYPE_PERF_EVENT_ARRAY` maps:
+
+```python
+pb = BpfPerfBuffer(obj.map("events"), sample_callback=lambda cpu, data: print(cpu, len(data)))
+pb.poll(timeout_ms=1000)
+```
+
+- `BpfPerfBuffer(map, sample_callback, lost_callback=None)`
+- `pb.poll(timeout_ms)` - Poll for events
+- `pb.consume()` - Process available events without waiting
+- Context manager support
 
 ### BpfLink
 
@@ -100,7 +137,7 @@ Properties: `name`, `type`, `key_size`, `value_size`, `max_entries`, `fd`, `info
 
 ## Requirements
 
-- Linux with kernel 5.8+ (for CO-RE support)
+- Linux with kernel 5.8+ (for ring buffers; basic features work on older kernels)
 - libelf (typically pre-installed)
 - Root or `CAP_BPF` capability
 
