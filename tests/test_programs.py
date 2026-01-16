@@ -70,6 +70,34 @@ class TestKprobeAttachment:
             link.destroy()
 
 
+class TestXdpAttachment:
+    """Tests for XDP attachment."""
+
+    def test_attach_xdp(self, xdp_bpf_path: Path) -> None:
+        """Can attach XDP program to loopback interface."""
+        import socket
+
+        with tinybpf.load(xdp_bpf_path) as obj:
+            prog = obj.program("xdp_pass")
+            ifindex = socket.if_nametoindex("lo")
+            link = prog.attach_xdp(ifindex)
+            assert link.fd >= 0
+            assert "xdp" in repr(link)
+            link.destroy()
+            assert link.fd == -1
+
+    def test_attach_xdp_context_manager(self, xdp_bpf_path: Path) -> None:
+        """XDP link supports context manager protocol."""
+        import socket
+
+        with tinybpf.load(xdp_bpf_path) as obj:
+            prog = obj.program("xdp_pass")
+            ifindex = socket.if_nametoindex("lo")
+            with prog.attach_xdp(ifindex) as link:
+                assert link.fd >= 0
+            assert link.fd == -1
+
+
 class TestProgramAttachmentErrors:
     """Tests for program attachment error handling."""
 

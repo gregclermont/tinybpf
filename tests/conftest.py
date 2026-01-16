@@ -5,6 +5,7 @@ Fixtures:
 - test_maps_bpf_path: Path to test_maps.bpf.o (hash, array, percpu maps)
 - ringbuf_bpf_path: Path to test_ringbuf.bpf.o (ring buffer maps)
 - perf_bpf_path: Path to test_perf.bpf.o (perf event array)
+- xdp_bpf_path: Path to test_xdp.bpf.o (XDP program)
 
 All integration tests require root privileges (CAP_BPF, CAP_SYS_ADMIN).
 """
@@ -88,6 +89,19 @@ def perf_bpf_path() -> Path:
     - trace_getpid: tracepoint, outputs perf events with CPU context
     """
     path = BPF_DIR / "test_perf.bpf.o"
+    if not path.exists():
+        pytest.skip(f"Compiled BPF program not found: {path}")
+    return path
+
+
+@pytest.fixture
+def xdp_bpf_path() -> Path:
+    """Path to compiled test_xdp.bpf.o test program.
+
+    Contains programs:
+    - xdp_pass: XDP program that passes all packets
+    """
+    path = BPF_DIR / "test_xdp.bpf.o"
     if not path.exists():
         pytest.skip(f"Compiled BPF program not found: {path}")
     return path
