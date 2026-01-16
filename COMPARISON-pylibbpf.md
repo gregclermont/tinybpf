@@ -7,8 +7,8 @@ This document provides an in-depth comparison between **tinybpf** and **pylibbpf
 | Aspect | tinybpf | pylibbpf |
 |--------|---------|----------|
 | **Binding Approach** | ctypes (pure Python) | pybind11 (C++ extension) |
-| **Build Requirements** | None (pure Python wheels) | CMake, C++20 compiler |
-| **Python Version** | 3.10+ | 3.8+ |
+| **Build Requirements** | None (pure Python wheels) | Wheels for x86_64; build from source for ARM |
+| **Python Version** | 3.10+ | 3.12+ (wheels), 3.8+ (source) |
 | **libbpf Version** | 1.4.0 (bundled) | Latest (git submodule) |
 | **CO-RE Support** | Yes | No explicit support |
 | **Ring Buffer** | Full support | Not implemented |
@@ -33,15 +33,20 @@ This document provides an in-depth comparison between **tinybpf** and **pylibbpf
 - Easier debugging and contribution
 
 ### pylibbpf
-- **pybind11 C++ bindings** - Requires compilation
+- **pybind11 C++ bindings** - Native C++ extension
 - libbpf as git submodule (statically linked)
-- Requires CMake 4.0+, C++20 compiler, Python headers
-- Build from source required
+- **Pre-built wheels available** on PyPI for Python 3.12+, x86_64 only
+- Build from source required for ARM64 or older Python versions (CMake 4.0+, C++20 compiler)
 
 **Advantages:**
 - Potentially faster for performance-critical operations
 - Direct memory access without Python overhead
 - Can leverage C++ optimizations
+
+**Wheel Limitations:**
+- No ARM64/aarch64 wheels (removed in commit 84c9da9)
+- Only Python 3.12 and 3.13 supported via wheels
+- Users on ARM or Python 3.8-3.11 must build from source
 
 ---
 
@@ -323,16 +328,21 @@ with load("prog.bpf.o") as obj:
 ### pylibbpf
 
 **Runtime:**
-- Python 3.8+
+- Python 3.12+ (for wheels) or 3.8+ (source build)
 - libelf (system)
 - llvmlite >= 0.40.0 (optional, for PythonBPF)
 
-**Build-time:**
+**Pre-built wheels (x86_64 only):**
+- No build-time dependencies
+- `pip install pylibbpf` just works
+
+**Build from source (ARM64 or Python <3.12):**
 - CMake >= 4.0
 - C++20 compiler (GCC/Clang)
 - Python development headers
-- pybind11 (git submodule)
-- libbpf (git submodule)
+- ninja (optional but recommended)
+- libelf-dev, zlib-dev (system packages)
+- pybind11 and libbpf fetched as git submodules
 
 ---
 
@@ -345,13 +355,21 @@ pip install tinybpf
 Pre-built wheels available; no compilation needed.
 
 ### pylibbpf
+
+**Via PyPI (x86_64, Python 3.12+ only):**
 ```bash
-sudo apt install libelf-dev  # or equivalent
+pip install pylibbpf
+```
+Pre-built wheels available for x86_64 Linux with Python 3.12 or 3.13.
+
+**From source (ARM64 or Python 3.8-3.11):**
+```bash
+sudo apt install libelf-dev cmake ninja-build  # build dependencies
 git clone --recursive https://github.com/pythonbpf/pylibbpf.git
 cd pylibbpf
 pip install .
 ```
-Requires build from source with C++ toolchain.
+Requires C++20 toolchain for source builds.
 
 ---
 
