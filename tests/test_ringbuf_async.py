@@ -186,3 +186,244 @@ class TestBpfRingBufferAsync:
         assert event.data == b"test_data"
         # Frozen dataclass - should be hashable
         assert hash(event) is not None
+
+
+class TestBpfRingBufferAsyncTyped:
+    """Tests for typed events in async ring buffer operations."""
+
+    async def test_ringbuf_poll_async_typed_callback(self, ringbuf_bpf_path: Path) -> None:
+        """poll_async() works with typed callback."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events: list[Event] = []
+
+        def callback(event: Event) -> int:
+            events.append(event)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                async with tinybpf.BpfRingBuffer(
+                    obj.maps["events"], callback, event_type=Event
+                ) as rb:
+                    subprocess.run(["/bin/true"], check=True)
+                    await rb.poll_async(timeout_ms=100)
+
+        assert len(events) >= 1, "No events captured"
+        assert isinstance(events[0], Event)
+        assert events[0].pid > 0
+
+    async def test_ringbuf_async_iterator_typed(self, ringbuf_bpf_path: Path) -> None:
+        """Async iteration yields typed events."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events: list[Event] = []
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.maps["events"], event_type=Event)
+
+                async def collect() -> None:
+                    async for event in rb:
+                        events.append(event)
+                        if len(events) >= 1:
+                            break
+
+                async def trigger() -> None:
+                    await asyncio.sleep(0.01)
+                    subprocess.run(["/bin/true"], check=True)
+
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(collect(), trigger()),
+                        timeout=2.0,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                finally:
+                    rb.close()
+
+        assert len(events) >= 1, "No events captured - async iteration may have timed out"
+        assert isinstance(events[0], Event)
+        assert events[0].pid > 0
+        assert events[0].tid > 0
+
+    async def test_ringbuf_tagged_events_typed(self, ringbuf_bpf_path: Path) -> None:
+        """Tagged events with event_type return typed data."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events: list[tinybpf.RingBufferEvent] = []
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.maps["events"], event_type=Event)
+
+                async def collect() -> None:
+                    async for event in rb.events():
+                        events.append(event)
+                        if len(events) >= 1:
+                            break
+
+                async def trigger() -> None:
+                    await asyncio.sleep(0.01)
+                    subprocess.run(["/bin/true"], check=True)
+
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(collect(), trigger()),
+                        timeout=2.0,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                finally:
+                    rb.close()
+
+        assert len(events) >= 1, "No events captured - async iteration may have timed out"
+        assert events[0].map_name == "events"
+        # Data should be typed Event, not bytes
+        assert isinstance(events[0].data, Event), f"Expected Event, got {type(events[0].data)}"
+        assert events[0].data.pid > 0
+
+    async def test_ringbuf_add_with_event_type(self, ringbuf_bpf_path: Path) -> None:
+        """add() accepts event_type parameter."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events: list[Event] = []
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer()
+                rb.add(obj.maps["events"], event_type=Event)
+
+                async def collect() -> None:
+                    async for event in rb:
+                        events.append(event)
+                        if len(events) >= 1:
+                            break
+
+                async def trigger() -> None:
+                    await asyncio.sleep(0.01)
+                    subprocess.run(["/bin/true"], check=True)
+
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(collect(), trigger()),
+                        timeout=2.0,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                finally:
+                    rb.close()
+
+        assert len(events) >= 1, "No events captured"
+        assert isinstance(events[0], Event)
+
+    async def test_ringbuf_add_with_btf_name(self, ringbuf_bpf_path: Path) -> None:
+        """add() accepts btf_name parameter."""
+        import ctypes
+
+        class MyEvent(ctypes.Structure):
+            _fields_ = [
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events: list[MyEvent] = []
+
+        def callback(event: MyEvent) -> int:
+            events.append(event)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer()
+                # Use btf_name to specify different BTF struct name
+                rb.add(
+                    obj.maps["events"],
+                    callback,
+                    event_type=MyEvent,
+                    btf_name="event",
+                )
+
+                subprocess.run(["/bin/true"], check=True)
+                await rb.poll_async(timeout_ms=100)
+                rb.close()
+
+        assert len(events) >= 1, "No events captured"
+        assert isinstance(events[0], MyEvent)
+
+    async def test_ringbuf_multi_map_tagged_typed(self, ringbuf_bpf_path: Path) -> None:
+        """Multi-map tagged events with same event_type."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events: list[tinybpf.RingBufferEvent] = []
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                with obj.program("trace_getpid").attach():
+                    rb = tinybpf.BpfRingBuffer()
+                    rb.add(obj.maps["events"], event_type=Event)
+                    rb.add(obj.maps["events2"], event_type=Event)
+
+                    async def collect() -> None:
+                        async for event in rb.events():
+                            events.append(event)
+                            if len(events) >= 2:
+                                break
+
+                    async def trigger() -> None:
+                        await asyncio.sleep(0.01)
+                        subprocess.run(["/bin/true"], check=True)
+                        os.getpid()
+
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.gather(collect(), trigger()),
+                            timeout=2.0,
+                        )
+                    except asyncio.TimeoutError:
+                        pass
+                    finally:
+                        rb.close()
+
+        assert len(events) >= 1, "No events captured"
+        # All events should have typed data
+        for event in events:
+            assert isinstance(event.data, Event), f"Expected Event, got {type(event.data)}"
+            assert event.map_name in {"events", "events2"}
