@@ -105,3 +105,19 @@ def xdp_bpf_path() -> Path:
     if not path.exists():
         pytest.skip(f"Compiled BPF program not found: {path}")
     return path
+
+
+@pytest.fixture
+def core_fail_bpf_path() -> Path:
+    """Path to compiled test_core_fail.bpf.o test program.
+
+    This program intentionally fails to load due to CO-RE relocation mismatch.
+    It references __data_loc_parent_comm which doesn't exist on kernels that
+    use inline arrays for tracepoint comm fields.
+
+    Used to test that libbpf error output is captured in BpfError.
+    """
+    path = BPF_DIR / "test_core_fail.bpf.o"
+    if not path.exists():
+        pytest.skip(f"Compiled BPF program not found: {path}")
+    return path

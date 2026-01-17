@@ -25,7 +25,6 @@ from tinybpf._types import (
     BtfKind,
     BtfType,
     BtfValidationError,
-    _check_err,
     _check_ptr,
     btf_kind,
     btf_vlen,
@@ -440,10 +439,16 @@ def load(path: str | Path) -> BpfObject:
     obj_ptr = lib.bpf_object__open_file(str(path).encode("utf-8"), None)
     _check_ptr(obj_ptr, f"open '{path}'")
 
-    # Load the object into the kernel
-    ret = lib.bpf_object__load(obj_ptr)
+    # Load the object into the kernel, capturing libbpf's stderr output
+    # which contains detailed error info (verifier log, CO-RE errors, etc.)
+    with bindings.capture_libbpf_output():
+        ret = lib.bpf_object__load(obj_ptr)
+
     if ret < 0:
         lib.bpf_object__close(obj_ptr)
-        _check_err(ret, f"load '{path}'")
+        err_abs = abs(ret)
+        msg = bindings.libbpf_strerror(err_abs)
+        libbpf_log = bindings.get_captured_output().strip() or None
+        raise BpfError(f"load '{path}' failed: {msg}", errno=err_abs, libbpf_log=libbpf_log)
 
     return BpfObject(obj_ptr, path)

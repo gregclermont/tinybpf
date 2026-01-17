@@ -63,3 +63,17 @@ class TestBpfObjectErrors:
 
         with pytest.raises(tinybpf.BpfError, match="closed"):
             prog.attach()
+
+    def test_load_failure_includes_libbpf_output(self, core_fail_bpf_path: Path) -> None:
+        """BpfError should include libbpf's detailed output on load failure."""
+        with pytest.raises(tinybpf.BpfError) as exc_info:
+            tinybpf.load(core_fail_bpf_path)
+
+        error = exc_info.value
+        # Should have errno set
+        assert error.errno != 0
+        # Should have libbpf_log with detailed error info
+        assert error.libbpf_log is not None
+        assert "CO-RE" in error.libbpf_log or "relocation" in error.libbpf_log
+        # The full message should include the libbpf output
+        assert "libbpf output:" in str(error)

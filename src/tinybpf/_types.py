@@ -22,10 +22,20 @@ T = TypeVar("T")
 
 
 class BpfError(Exception):
-    """Base exception for BPF-related errors."""
+    """Base exception for BPF-related errors.
 
-    def __init__(self, message: str, errno: int = 0) -> None:
+    Attributes:
+        errno: The error number from the failed operation (0 if not applicable).
+        libbpf_log: Detailed output from libbpf (verifier log, CO-RE errors, etc.)
+            that provides more context than the basic error message.
+    """
+
+    def __init__(self, message: str, errno: int = 0, libbpf_log: str | None = None) -> None:
         self.errno = errno
+        self.libbpf_log = libbpf_log
+        # Include log excerpt in message if available
+        if libbpf_log:
+            message = f"{message}\n\nlibbpf output:\n{libbpf_log}"
         super().__init__(message)
 
 

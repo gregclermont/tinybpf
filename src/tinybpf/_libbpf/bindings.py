@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import fcntl
+import os
+import threading
+from contextlib import contextmanager, suppress
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _lib: ctypes.CDLL | None = None
 _initialized: bool = False
@@ -390,3 +398,81 @@ def num_possible_cpus() -> int:
     """Return the number of possible CPUs, or negative errno on failure."""
     lib = _get_lib()
     return lib.libbpf_num_possible_cpus()
+
+
+# Thread-local storage for captured stderr
+_captured_output = threading.local()
+
+
+@contextmanager
+def capture_libbpf_output() -> Iterator[None]:
+    """Context manager to capture libbpf's stderr output.
+
+    libbpf prints detailed error information (verifier logs, CO-RE relocation
+    errors, etc.) to stderr. This context manager captures that output so it
+    can be included in exceptions.
+
+    Usage:
+        with capture_libbpf_output():
+            ret = lib.bpf_object__load(obj)
+        if ret < 0:
+            log = get_captured_output()
+            raise BpfError(f"load failed", libbpf_log=log)
+
+    Note: This uses file descriptor redirection which is thread-safe for the
+    capture itself, but the captured output is stored in thread-local storage.
+    """
+    # Initialize thread-local captured output
+    _captured_output.value = ""
+
+    # Save original stderr fd (fd 2)
+    original_stderr_fd = 2
+    saved_stderr_fd = os.dup(original_stderr_fd)
+
+    # Create a pipe for capturing
+    read_fd, write_fd = os.pipe()
+
+    try:
+        # Redirect stderr (fd 2) to the write end of the pipe
+        os.dup2(write_fd, original_stderr_fd)
+        os.close(write_fd)  # Close our copy, original_stderr_fd now owns it
+
+        try:
+            yield
+        finally:
+            # Restore original stderr - this closes the pipe's write end
+            # which signals EOF to any reader
+            os.dup2(saved_stderr_fd, original_stderr_fd)
+
+            # Now read all captured output from the pipe
+            # Set read_fd to non-blocking to avoid hanging if empty
+            flags = fcntl.fcntl(read_fd, fcntl.F_GETFL)
+            fcntl.fcntl(read_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+            chunks = []
+            try:
+                while True:
+                    chunk = os.read(read_fd, 65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            except BlockingIOError:
+                pass  # No more data available
+
+            _captured_output.value = b"".join(chunks).decode("utf-8", errors="replace")
+
+    finally:
+        # Clean up file descriptors
+        with suppress(OSError):
+            os.close(read_fd)
+        with suppress(OSError):
+            os.close(saved_stderr_fd)
+
+
+def get_captured_output() -> str:
+    """Get the output captured by the most recent capture_libbpf_output() call.
+
+    Returns:
+        The captured stderr output, or empty string if nothing was captured.
+    """
+    return getattr(_captured_output, "value", "")
