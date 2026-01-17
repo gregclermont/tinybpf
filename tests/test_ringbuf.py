@@ -55,7 +55,7 @@ class TestBpfRingBuffer:
                     subprocess.run(["/bin/true"], check=True)
                     rb.poll(timeout_ms=100)
 
-        assert len(events) >= 1
+        assert len(events) >= 1, "No events captured - execve trace may not have triggered"
         # Verify event structure (pid, tid, comm) = 4 + 4 + 16 = 24 bytes
         assert len(events[0]) == 24
 
