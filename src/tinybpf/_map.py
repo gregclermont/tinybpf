@@ -36,6 +36,16 @@ if TYPE_CHECKING:
 KT = TypeVar("KT")
 VT = TypeVar("VT")
 
+# Per-CPU map types that require special handling
+_PERCPU_MAP_TYPES = frozenset(
+    {
+        BpfMapType.PERCPU_HASH,
+        BpfMapType.PERCPU_ARRAY,
+        BpfMapType.LRU_PERCPU_HASH,
+        BpfMapType.PERCPU_CGROUP_STORAGE,
+    }
+)
+
 
 class BpfMap(Generic[KT, VT]):
     """A BPF map.
@@ -149,6 +159,11 @@ class BpfMap(Generic[KT, VT]):
     def is_standalone(self) -> bool:
         """Return True if this map was opened from a pinned path."""
         return self._owned_fd is not None
+
+    @property
+    def is_percpu(self) -> bool:
+        """Return True if this map is a per-CPU map type."""
+        return self._type in _PERCPU_MAP_TYPES
 
     @property
     def btf_key(self) -> BtfType | None:
@@ -348,6 +363,10 @@ class BpfMap(Generic[KT, VT]):
         # Fallback: return bytes
         return data  # type: ignore
 
+    def _percpu_value_stride(self) -> int:
+        """Return the stride between per-CPU values (8-byte aligned)."""
+        return (self._value_size + 7) & ~7
+
     def lookup(self, key: KT) -> VT | None:
         """Look up a value by key.
 
@@ -356,7 +375,15 @@ class BpfMap(Generic[KT, VT]):
 
         Returns:
             The value if found, None otherwise.
+
+        Raises:
+            TypeError: If called on a per-CPU map (use lookup_percpu instead).
         """
+        if self.is_percpu:
+            raise TypeError(
+                f"lookup() is not supported for per-CPU maps. "
+                f"Use lookup_percpu() or lookup_percpu_sum() for '{self._name}'"
+            )
         self._check_open()
         lib = bindings._get_lib()
         key_bytes = self._to_key_bytes(key)
@@ -374,6 +401,104 @@ class BpfMap(Generic[KT, VT]):
             raise BpfError(f"Map lookup failed for '{self._name}': {msg}", errno=err)
         return self._from_value_bytes(value_buf.raw)
 
+    def lookup_percpu(self, key: KT) -> list[VT] | None:
+        """Look up per-CPU values by key.
+
+        For per-CPU maps, returns a list of values, one per possible CPU.
+        The list is indexed by CPU number.
+
+        Args:
+            key: The key to look up (bytes, int, or ctypes.Structure).
+
+        Returns:
+            List of values indexed by CPU, or None if key not found.
+
+        Raises:
+            TypeError: If called on a non-per-CPU map.
+        """
+        if not self.is_percpu:
+            raise TypeError(
+                f"lookup_percpu() is only valid for per-CPU maps, "
+                f"but '{self._name}' is {self._type.name}"
+            )
+        self._check_open()
+        lib = bindings._get_lib()
+
+        num_cpus = bindings.num_possible_cpus()
+        stride = self._percpu_value_stride()
+
+        key_bytes = self._to_key_bytes(key)
+        key_buf = ctypes.create_string_buffer(key_bytes, self._key_size)
+        value_buf = ctypes.create_string_buffer(num_cpus * stride)
+
+        ret = lib.bpf_map_lookup_elem(
+            self.fd, ctypes.cast(key_buf, ctypes.c_void_p), ctypes.cast(value_buf, ctypes.c_void_p)
+        )
+        if ret < 0:
+            err = abs(ret)
+            if err == errno.ENOENT:
+                return None  # Key not found
+            msg = bindings.libbpf_strerror(err)
+            raise BpfError(f"Map lookup failed for '{self._name}': {msg}", errno=err)
+
+        # Extract per-CPU values
+        result: list[VT] = []
+        for cpu in range(num_cpus):
+            offset = cpu * stride
+            cpu_data = value_buf.raw[offset : offset + self._value_size]
+            result.append(self._from_value_bytes(cpu_data))
+        return result
+
+    def lookup_percpu_sum(self, key: KT) -> int | float | None:
+        """Look up per-CPU values and return their sum.
+
+        Convenience method for summing counters across all CPUs.
+        Only works with numeric value types (int or float).
+
+        Args:
+            key: The key to look up.
+
+        Returns:
+            Sum of values across all CPUs, or None if key not found.
+
+        Raises:
+            TypeError: If called on a non-per-CPU map or value type is not numeric.
+        """
+        values = self.lookup_percpu(key)
+        if values is None:
+            return None
+
+        # Check that values are numeric
+        if not values:
+            return 0
+
+        first = values[0]
+        if not isinstance(first, int | float):
+            raise TypeError(
+                f"lookup_percpu_sum() requires numeric values, but got {type(first).__name__}"
+            )
+
+        return sum(values)  # type: ignore[arg-type]
+
+    def items_percpu(self) -> Iterator[tuple[KT, list[VT]]]:
+        """Iterate over (key, per-CPU values) pairs.
+
+        Yields:
+            Tuples of (key, list of values per CPU).
+
+        Raises:
+            TypeError: If called on a non-per-CPU map.
+        """
+        if not self.is_percpu:
+            raise TypeError(
+                f"items_percpu() is only valid for per-CPU maps, "
+                f"but '{self._name}' is {self._type.name}"
+            )
+        for key in self.keys():
+            values = self.lookup_percpu(key)
+            if values is not None:
+                yield key, values
+
     def update(self, key: KT, value: VT, flags: int = BPF_ANY) -> None:
         """Update a map element.
 
@@ -384,7 +509,13 @@ class BpfMap(Generic[KT, VT]):
 
         Raises:
             BpfError: If update fails.
+            TypeError: If called on a per-CPU map.
         """
+        if self.is_percpu:
+            raise TypeError(
+                f"update() is not supported for per-CPU maps. "
+                f"Per-CPU values can only be written from BPF programs for '{self._name}'"
+            )
         self._check_open()
         lib = bindings._get_lib()
         key_bytes = self._to_key_bytes(key)

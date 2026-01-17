@@ -317,6 +317,10 @@ def _setup_function_signatures(lib: ctypes.CDLL) -> None:
     lib.btf__type_cnt.argtypes = [btf_p]
     lib.btf__type_cnt.restype = ctypes.c_uint32
 
+    # CPU count
+    lib.libbpf_num_possible_cpus.argtypes = []
+    lib.libbpf_num_possible_cpus.restype = ctypes.c_int
+
 
 def init(libbpf_path: str | Path | None = None) -> None:
     """Initialize libbpf with optional custom library path.
@@ -380,3 +384,16 @@ def libbpf_strerror(err: int) -> str:
     buf = ctypes.create_string_buffer(256)
     lib.libbpf_strerror(err, buf, len(buf))
     return buf.value.decode("utf-8")
+
+
+def num_possible_cpus() -> int:
+    """Return the number of possible CPUs on this system."""
+    lib = _get_lib()
+    ret = lib.libbpf_num_possible_cpus()
+    if ret < 0:
+        err_abs = abs(ret)
+        msg = libbpf_strerror(err_abs)
+        from tinybpf._types import BpfError
+
+        raise BpfError(f"get number of possible CPUs failed: {msg}", errno=err_abs)
+    return ret
