@@ -283,6 +283,15 @@ bpftool btf dump file program.bpf.o | grep -A 10 "'event'"
 
 ## Development Setup
 
+### Running with Root
+
+BPF operations require root privileges. When using uv:
+
+```bash
+# sudo resets PATH, so uv won't be found. Resolve the path first:
+sudo $(which uv) run python my_bpf_script.py
+```
+
 ### CI Workflow
 
 Example GitHub Actions workflow to compile BPF programs and run tests:
