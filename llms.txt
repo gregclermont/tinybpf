@@ -21,9 +21,6 @@ with tinybpf.load("program.bpf.o") as obj:
     obj.programs  # Dict-like: ProgramCollection
     obj.maps      # Dict-like: MapCollection
     obj.program("name")  # -> BpfProgram
-    obj.map("name")      # -> BpfMap (returns bytes)
-    obj.map("name", key_type=int, value_type=int)  # -> BpfMap with auto-conversion
-    obj.map("name", value_type=Event)  # -> BpfMap[Any, Event] for ctypes.Structure
 
 # Open pinned map from bpffs
 with tinybpf.open_pinned_map("/sys/fs/bpf/my_map") as map:
@@ -49,22 +46,34 @@ value = map[key]    # lookup (KeyError if missing)
 del map[key]        # delete
 key in map          # contains
 map.lookup(key)     # -> value or None
+map.get(key, default=None)  # -> value or default
 map.update(key, value, flags=BPF_ANY)  # flags: BPF_ANY|BPF_NOEXIST|BPF_EXIST
 map.delete(key)     # -> bool
 map.keys(), map.values(), map.items()  # iterators
 map.pin("/sys/fs/bpf/path")   # pin to bpffs (object-owned maps only)
 map.unpin("/sys/fs/bpf/path") # remove pin
 map.name, map.type, map.key_size, map.value_size, map.max_entries, map.fd, map.info
+map.is_standalone   # True if opened from pinned path
 
-# Keys/values: bytes, int, or ctypes.Structure
+# Typed access - int/float auto-convert when BTF metadata is available
+# Use .typed() for ctypes.Structure or explicit BTF validation
+map.typed(value=Event)         # -> BpfMap[Any, Event] for ctypes.Structure
+map.typed(key=int, value=int, validate_field_names=True)  # explicit validation
+map.btf_key   # -> BtfType or None (BTF type info for key)
+map.btf_value # -> BtfType or None (BTF type info for value)
+
+# Keys/values: bytes, int, float (auto via BTF), or ctypes.Structure
 
 # BpfRingBuffer - stream events from BPF_MAP_TYPE_RINGBUF
 rb = BpfRingBuffer(map, callback=lambda data: ...)  # callback receives bytes
-rb = BpfRingBuffer(map, callback, event_type=Event)  # callback receives Event (ctypes.Structure)
+rb = BpfRingBuffer(map, callback, event_type=Event)  # callback receives Event
+rb = BpfRingBuffer(map, callback, event_type=Event, validate_btf_struct="event")  # BTF validation
 rb = BpfRingBuffer()  # empty, then rb.add(map, callback) for multi-map
 rb.add(map, callback, event_type=Event)  # add map with typed events
 rb.poll(timeout_ms=-1)    # poll and invoke callbacks, returns event count
 rb.consume()              # process available events without waiting
+rb.epoll_fd()             # epoll fd for custom event loop integration
+rb.fileno()               # alias for epoll_fd() (file-like protocol)
 await rb.poll_async()     # async polling
 async for event in rb     # async iteration (type depends on event_type)
 for event in rb           # sync iteration after poll() (type depends on event_type)
@@ -74,6 +83,7 @@ rb.events()               # async iterator yielding RingBufferEvent[T] with .map
 # BpfPerfBuffer - stream events from BPF_MAP_TYPE_PERF_EVENT_ARRAY
 pb = BpfPerfBuffer(map, sample_callback=lambda cpu, data: ..., lost_callback=None)
 pb = BpfPerfBuffer(map, sample_callback, event_type=Event)  # callback receives (cpu, Event)
+pb = BpfPerfBuffer(map, sample_callback, event_type=Event, validate_btf_struct="event")  # BTF validation
 pb.poll(timeout_ms=-1)    # poll and invoke callbacks
 pb.consume()              # process available events without waiting
 
@@ -87,10 +97,15 @@ tinybpf.libbpf_version()  # bundled libbpf version
 
 # Types
 BpfObject, BpfProgram, BpfMap, BpfLink, BpfRingBuffer, BpfPerfBuffer
-BpfMapType, BpfProgType  # IntEnums
-MapInfo, ProgramInfo, RingBufferEvent  # dataclasses
-BpfError                 # exception with .errno
+BpfMapType, BpfProgType, BtfKind  # IntEnums
+MapInfo, ProgramInfo, RingBufferEvent, BtfType, BtfField  # dataclasses
+BpfError, BtfValidationError  # exceptions (.errno attribute)
 BPF_ANY, BPF_NOEXIST, BPF_EXIST  # map update flags
+
+# BTF type introspection
+BtfType(name, kind, size, fields)  # dataclass describing a BTF type
+BtfField(name, offset, size)       # dataclass describing a struct field
+BtfKind.INT, STRUCT, UNION, ARRAY, PTR, TYPEDEF, FLOAT, ...  # BTF type kinds
 ```
 
 ## Example
@@ -105,7 +120,8 @@ class Event(ctypes.Structure):
 with tinybpf.load("trace.bpf.o") as obj:
     link = obj.program("trace_exec").attach_kprobe("do_execve")
     # ... wait for events ...
-    for key, event in obj.maps["events"].items():
+    events = obj.maps["events"].typed(value=Event)
+    for key, event in events.items():
         print(f"PID {event.pid}: {event.comm.decode()}")
 ```
 
@@ -114,6 +130,7 @@ with tinybpf.load("trace.bpf.o") as obj:
 - `BpfError: open failed: No such file or directory` - .bpf.o file not found
 - `BpfError: load failed: Operation not permitted` - need root or CAP_BPF
 - `BpfError: attach kprobe failed: No such file or directory` - kernel function doesn't exist
+- `BtfValidationError: Size mismatch` - Python struct size doesn't match BTF
 - `KeyError` - program/map name not in object, or map key not found
 
 ## Links

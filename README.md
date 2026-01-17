@@ -44,7 +44,7 @@ import ctypes
 class Event(ctypes.Structure):
     _fields_ = [("pid", ctypes.c_uint32), ("comm", ctypes.c_char * 16)]
 
-for key, event in obj.maps["events"].items():
+for key, event in obj.maps["events"].typed(value=Event).items():
     print(f"PID {event.pid}: {event.comm.decode()}")
 ```
 
@@ -61,24 +61,7 @@ for key, event in obj.maps["events"].items():
 - `obj.programs` - Dict-like access to programs by name
 - `obj.maps` - Dict-like access to maps by name
 - `obj.program(name)` - Get program by name
-- `obj.map(name, key_type=, value_type=)` - Get map by name with optional typed access
 - Context manager support (`with` statement)
-
-Typed map access auto-converts keys and values:
-
-```python
-# Without types - returns bytes
-map = obj.map("counters")
-value = map[key.to_bytes(4, "little")]  # bytes
-
-# With types - auto-converts
-map = obj.map("counters", key_type=int, value_type=int)
-value = map[42]  # int
-
-# With ctypes.Structure
-map = obj.map("events", key_type=int, value_type=Event)
-event = map[pid]  # Event instance
-```
 
 ### BpfProgram
 
@@ -102,6 +85,18 @@ Dict-like interface:
 - `map.keys()`, `map.values()`, `map.items()`
 - `map.lookup(key)`, `map.update(key, value, flags)`, `map.delete(key)`
 
+Typed access:
+
+```python
+# int/float keys and values auto-convert when BTF metadata is available
+counters = obj.maps["counters"]
+value = counters[42]  # int (auto-converted via BTF)
+
+# Use .typed() for ctypes.Structure or explicit validation
+events = obj.maps["events"].typed(value=Event)
+event = events[pid]  # Event instance
+```
+
 Pinning (for maps from `BpfObject`):
 - `map.pin(path)` - Pin to bpffs
 - `map.unpin(path)` - Remove pin
@@ -115,7 +110,7 @@ Properties: `name`, `type`, `key_size`, `value_size`, `max_entries`, `fd`, `info
 Stream events from `BPF_MAP_TYPE_RINGBUF` maps:
 
 ```python
-rb = BpfRingBuffer(obj.map("events"), callback=lambda data: print(len(data)))
+rb = BpfRingBuffer(obj.maps["events"], callback=lambda data: print(len(data)))
 rb.poll(timeout_ms=1000)
 ```
 
@@ -124,7 +119,7 @@ rb.poll(timeout_ms=1000)
 - `rb.poll(timeout_ms)` - Poll for events, invoke callbacks
 - `rb.consume()` - Process available events without waiting
 - Async support: `await rb.poll_async()`, `async for event in rb`
-- Iterator mode: omit callback, use `for data in rb.poll_iter()`
+- Iterator mode: omit callback, use `for data in rb` after `poll()`
 - Context manager support
 
 Typed events with auto-conversion:
@@ -134,10 +129,10 @@ class Event(ctypes.Structure):
     _fields_ = [("pid", ctypes.c_uint32), ("comm", ctypes.c_char * 16)]
 
 # Callback receives Event instances
-rb = BpfRingBuffer(obj.map("events"), handle, event_type=Event)
+rb = BpfRingBuffer(obj.maps["events"], handle, event_type=Event)
 
 # Iterator mode also supports typed events
-rb = BpfRingBuffer(obj.map("events"), event_type=Event)
+rb = BpfRingBuffer(obj.maps["events"], event_type=Event)
 for event in rb:  # event is Event, not bytes
     print(event.pid)
 ```
@@ -147,7 +142,7 @@ for event in rb:  # event is Event, not bytes
 Stream events from `BPF_MAP_TYPE_PERF_EVENT_ARRAY` maps:
 
 ```python
-pb = BpfPerfBuffer(obj.map("events"), sample_callback=lambda cpu, data: print(cpu, len(data)))
+pb = BpfPerfBuffer(obj.maps["events"], sample_callback=lambda cpu, data: print(cpu, len(data)))
 pb.poll(timeout_ms=1000)
 ```
 
@@ -165,7 +160,7 @@ class Event(ctypes.Structure):
 def handle(cpu: int, event: Event) -> None:
     print(cpu, event.pid)
 
-pb = BpfPerfBuffer(obj.map("events"), handle, event_type=Event)
+pb = BpfPerfBuffer(obj.maps["events"], handle, event_type=Event)
 ```
 
 ### BpfLink
@@ -179,6 +174,7 @@ pb = BpfPerfBuffer(obj.map("events"), handle, event_type=Event)
 - `tinybpf.version()` - Package version
 - `tinybpf.libbpf_version()` - Bundled libbpf version
 - `BpfError` - Exception type with `errno` attribute
+- `BtfValidationError` - Exception for BTF type mismatches
 
 ## Requirements
 
