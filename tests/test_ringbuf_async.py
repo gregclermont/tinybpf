@@ -84,11 +84,11 @@ class TestBpfRingBufferAsync:
                         timeout=2.0,
                     )
                 except asyncio.TimeoutError:
-                    pass
+                    pass  # Timeout is acceptable - we check events below
                 finally:
                     rb.close()
 
-        assert len(events) >= 1
+        assert len(events) >= 1, "No events captured - async iteration may have timed out"
         assert len(events[0]) == 24  # pid + tid + comm
 
     async def test_ringbuf_async_context_manager(self, ringbuf_bpf_path: Path) -> None:
@@ -122,11 +122,11 @@ class TestBpfRingBufferAsync:
                         timeout=2.0,
                     )
                 except asyncio.TimeoutError:
-                    pass
+                    pass  # Timeout is acceptable - we check events below
                 finally:
                     rb.close()
 
-        assert len(events) >= 1
+        assert len(events) >= 1, "No events captured - async iteration may have timed out"
         assert events[0].map_name == "events"
         assert isinstance(events[0].data, bytes)
         assert len(events[0].data) == 24  # pid + tid + comm
@@ -159,12 +159,12 @@ class TestBpfRingBufferAsync:
                             timeout=2.0,
                         )
                     except asyncio.TimeoutError:
-                        pass
+                        pass  # Timeout is acceptable - we check events below
                     finally:
                         rb.close()
 
         # Verify we got events and they have valid map names
-        assert len(events) >= 1
+        assert len(events) >= 1, "No events captured - async iteration may have timed out"
         map_names = {e.map_name for e in events}
         assert map_names <= {"events", "events2"}
         for event in events:

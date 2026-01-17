@@ -81,9 +81,11 @@ class TestBpfPerfBuffer:
             lost_events.append((cpu, count))
 
         with tinybpf.load(perf_bpf_path) as obj:
-            # Just test that it can be created with lost callback
+            # Test that perf buffer can be created with lost callback
+            # (actual lost event testing would require overflowing the buffer)
             with tinybpf.BpfPerfBuffer(obj.maps["events"], sample_cb, lost_cb) as pb:
-                assert pb is not None
+                # Verify lost callback is wired up
+                assert pb._user_lost_callback is lost_cb
 
     def test_perfbuf_callback_exception(self, perf_bpf_path: Path) -> None:
         """Exception in callback is propagated."""
