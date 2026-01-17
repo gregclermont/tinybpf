@@ -8,119 +8,72 @@ tinybpf is a minimal Python library for loading and interacting with pre-compile
 
 ## Documentation Structure
 
-The repository has four documentation targets with distinct purposes:
-
-| Document | Audience | Content |
+| Document | Audience | Purpose |
 |----------|----------|---------|
 | `README.md` | Library users | API reference, installation, quick start |
-| `GUIDE.md` | BPF developers | Concepts, patterns, debugging - how to write BPF programs that work with tinybpf |
-| `DEVELOPMENT.md` | Contributors | Dev setup, testing, CI/CD workflows - how to contribute to tinybpf itself |
-| `examples/` | BPF developers | Runnable example programs demonstrating patterns from GUIDE.md |
-| `llms.txt` | AI assistants | Concise API reference, points to GUIDE.md for BPF patterns |
+| `GUIDE.md` | BPF developers | Patterns for writing BPF programs that work with tinybpf |
+| `DEVELOPMENT.md` | Contributors | Dev setup, make targets, CI/CD workflows |
+| `examples/` | BPF developers | Runnable programs demonstrating GUIDE.md patterns |
+| `llms.txt` | AI assistants | Concise API reference |
 
 **Key principles:**
 - README.md stays concise - API reference, not tutorials
-- GUIDE.md is the learning path for BPF development patterns (CO-RE, struct layouts, debugging)
-- GUIDE.md references examples/; example READMEs reference back to GUIDE.md
-- DEVELOPMENT.md is strictly for contributors, not users
-- examples/ contains complete, runnable programs with brief READMEs (what it shows, how to run)
+- GUIDE.md is the learning path for BPF patterns; references examples/
+- DEVELOPMENT.md is strictly for contributors
+- examples/ are complete, runnable programs with brief READMEs
 
 ## Development
 
-See `DEVELOPMENT.md` for full setup, commands, and CI/CD workflow documentation.
+See `DEVELOPMENT.md` for full documentation. Key commands:
 
-**Quick reference:**
 ```bash
-make test      # Run tests (auto-detects OS)
-make compile   # Compile eBPF test programs (auto-detects OS)
-make check     # Run all code quality checks
+make check     # Run all code quality checks (ruff, mypy)
+make test      # Run tests
+make compile   # Compile eBPF programs
 ```
 
 ## Architecture
 
-### Repository Layout
-```
-├── README.md            # API reference for library users
-├── GUIDE.md             # BPF development patterns and concepts
-├── DEVELOPMENT.md       # Contributor guide (setup, CI/CD)
-├── llms.txt             # Concise API reference for AI assistants
-├── examples/            # Runnable example programs
-│   ├── README.md        # Index of examples
-│   └── <example>/       # Each example: .bpf.c, .py, README.md
-├── src/tinybpf/         # Library source
-│   ├── __init__.py      # Public API exports
-│   ├── _types.py        # Exception, enums, dataclasses, error helpers
-│   ├── _link.py         # BpfLink class
-│   ├── _map.py          # BpfMap, MapCollection
-│   ├── _program.py      # BpfProgram, ProgramCollection
-│   ├── _buffers.py      # BpfRingBuffer, BpfPerfBuffer
-│   ├── _object.py       # BpfObject, load()
-│   └── _libbpf/
-│       ├── __init__.py
-│       └── bindings.py  # Low-level ctypes bindings to libbpf C functions
-└── tests/               # Test suite
-```
-
 ### Key Design Patterns
 
-1. **ctypes over cffi/Cython**: Zero build-time dependencies, pure Python wheels, simpler distribution. libbpf API is stable and small.
+1. **ctypes over cffi/Cython**: Zero build-time dependencies, pure Python wheels.
 
-2. **Bundled libbpf, system libelf**: System libbpf versions vary too widely (need 1.4.0+), but libelf is stable and ubiquitous. Bundling libelf would require also bundling libzstd, liblzma, libbz2.
+2. **Bundled libbpf, system libelf**: System libbpf versions vary too widely (need 1.4.0+), but libelf is stable and ubiquitous.
 
-3. **Dict-like interfaces**: `BpfMap` supports `[]` access, iteration, `.items()`, `.keys()`, `.values()`. `ProgramCollection` and `MapCollection` provide dict-like access by name.
+3. **Generic types**: `BpfMap[KT, VT]`, `BpfRingBuffer[T]` for type-safe key/value/event handling.
 
-4. **Context managers**: `BpfObject` and `BpfLink` implement `__enter__`/`__exit__` for automatic resource cleanup.
+4. **Dict-like interfaces**: `BpfMap` supports `[]` access, iteration, `.items()`, `.keys()`, `.values()`.
 
-5. **Error handling**: libbpf functions return `-errno` directly (not -1 with errno set via C library). Use `abs(ret)` to extract the error code, not `ctypes.get_errno()`. See `_check_err()` in `_types.py` for the canonical pattern.
+5. **Context managers**: `BpfObject` and `BpfLink` implement `__enter__`/`__exit__` for resource cleanup.
 
-## Test Requirements
+6. **Error handling**: libbpf returns `-errno` directly. Use `abs(ret)` to extract error codes, not `ctypes.get_errno()`. See `_check_err()` in `_types.py`.
 
-- `test_api.py` and `test_version.py`: No special requirements
-- `test_load.py`: Requires root/CAP_BPF privileges and compiled eBPF test programs in `tests/bpf/`
+7. **TYPE_CHECKING imports**: Use `if TYPE_CHECKING:` blocks for imports only needed by type hints, avoiding circular imports.
 
-## CI/CD
+## Testing
 
-- eBPF test programs (`tests/bpf/*.bpf.c`) are compiled using `ghcr.io/gregclermont/tinybpf-compile` Docker image
-- Wheels are architecture-specific (manylinux_2_28_x86_64, manylinux_2_28_aarch64)
-- libbpf version is pinned in `.libbpf-version` file
+- Most tests require root/CAP_BPF and compiled BPF programs in `tests/bpf/`
+- Tests use `requires_root` marker to skip when unprivileged
+- `test_api.py` and `test_version.py` run without privileges
 
-## Compiling and Debugging BPF Programs
+## Conventions
 
-### Compiling BPF Programs (macOS or Linux)
+- **Library code**: Check existing modules in `src/tinybpf/` for patterns
+- **Examples**: Check existing examples for structure (PEP 723 headers, signal handling)
+- **Tests**: Check `tests/conftest.py` for fixtures and existing tests for patterns
 
-```bash
-make compile  # Auto-detects OS, uses Docker in Lima on macOS
-```
-
-See `DEVELOPMENT.md` for advanced options (custom output paths, extra compiler flags).
-
-### Inspecting BTF Information
-
-On the lima VM (or any Linux with bpftool):
-```bash
-# Dump all BTF types
-limactl shell tinybpf -- bpftool btf dump file tests/bpf/myprogram.bpf.o
-
-# Search for a specific struct
-limactl shell tinybpf -- bpftool btf dump file tests/bpf/myprogram.bpf.o | grep -A 10 "'mystruct'"
-```
+## BPF Development Notes
 
 ### Exporting Structs to BTF
 
-Event structs used in ring/perf buffers are NOT automatically included in BTF.
-To make a struct available for BTF validation, "anchor" it using one of:
+Event structs for ring/perf buffers must be explicitly anchored in BTF:
 
 ```c
-// Method 1: Global variable (recommended)
 struct event _event_anchor __attribute__((unused));
-
-// Method 2: BTF_TYPE_EMIT macro (if available in your vmlinux.h)
-BTF_TYPE_EMIT(struct event);
 ```
 
-### Running Python Scripts in Lima VM
+### Inspecting BTF
 
 ```bash
-# Run a Python script with sudo (required for BPF operations)
-limactl shell tinybpf -- sudo python3 /path/to/script.py
+bpftool btf dump file path/to/program.bpf.o | grep -A 10 "'mystruct'"
 ```
