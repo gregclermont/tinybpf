@@ -91,9 +91,12 @@ async for event in rb     # async iteration (type depends on event_type)
 for event in rb           # sync iteration after poll() (type depends on event_type)
 rb.events()               # async iterator yielding RingBufferEvent[T] with .map_name, .data
 # Note: iterator mode requires same event_type for all maps; use callback mode for different types per map
-# Multiple event types: put discriminator at consistent offset in all C structs
+# Multiple event types in single buffer: put discriminator at consistent offset in all C structs
 #   event_type = data[8]  # read discriminator at known offset
 #   if event_type == X and len(data) >= ctypes.sizeof(EventX): event = EventX.from_buffer_copy(data)
+# Alternative: use multi-map with typed callbacks (simpler, no manual discrimination)
+#   rb.add(obj.maps["exec_events"], handle_exec, event_type=ExecEvent)
+#   rb.add(obj.maps["exit_events"], handle_exit, event_type=ExitEvent)
 
 # BpfPerfBuffer - stream events from BPF_MAP_TYPE_PERF_EVENT_ARRAY
 pb = BpfPerfBuffer(map, sample_callback=lambda cpu, data: ..., lost_callback=None)
