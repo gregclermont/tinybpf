@@ -198,6 +198,49 @@ def handle(event: Event):
 rb = BpfRingBuffer(obj.maps["events"], handle, event_type=Event)
 ```
 
+Multiple event types through one buffer:
+
+```python
+# C structs must have discriminator at consistent offset across all event types:
+#   struct exec_event { __u64 ts; __u8 event_type; __u8 _pad[3]; __u32 pid; ... };
+#   struct exit_event { __u64 ts; __u8 event_type; __u8 _pad[3]; __u32 pid; ... };
+
+EVENT_EXEC, EVENT_EXIT = 1, 2
+
+class ExecEvent(ctypes.Structure):
+    _fields_ = [
+        ("ts", ctypes.c_uint64),
+        ("event_type", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8 * 3),
+        ("pid", ctypes.c_uint32),
+        ("comm", ctypes.c_char * 16),
+    ]
+
+class ExitEvent(ctypes.Structure):
+    _fields_ = [
+        ("ts", ctypes.c_uint64),
+        ("event_type", ctypes.c_uint8),
+        ("_pad", ctypes.c_uint8 * 3),
+        ("pid", ctypes.c_uint32),
+        ("exit_code", ctypes.c_int32),
+    ]
+
+def handle(data: bytes):
+    event_type = data[8]  # Read discriminator at known offset
+    if event_type == EVENT_EXEC and len(data) >= ctypes.sizeof(ExecEvent):
+        event = ExecEvent.from_buffer_copy(data)
+    elif event_type == EVENT_EXIT and len(data) >= ctypes.sizeof(ExitEvent):
+        event = ExitEvent.from_buffer_copy(data)
+
+rb = BpfRingBuffer(obj.maps["events"], handle)  # No event_type; handle bytes manually
+```
+
+Key points:
+- Put discriminator field (`event_type`) at same offset in all C structs
+- Use explicit `_pad` fields to control alignment
+- Python ctypes struct must exactly match C layout including padding
+- Validate `len(data)` before `from_buffer_copy()` to avoid reading garbage
+
 ### BpfPerfBuffer
 
 Stream events from `BPF_MAP_TYPE_PERF_EVENT_ARRAY` maps:
