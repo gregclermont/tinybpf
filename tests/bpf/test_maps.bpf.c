@@ -30,6 +30,22 @@ struct {
     __type(value, __u64);
 } percpu_stats SEC(".maps");
 
+// Array map with 32-bit float values (for testing FLOAT BTF type inference)
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 4);
+    __type(key, __u32);
+    __type(value, float);
+} float32_values SEC(".maps");
+
+// Array map with 64-bit double values (for testing FLOAT BTF type inference)
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 4);
+    __type(key, __u32);
+    __type(value, double);
+} float64_values SEC(".maps");
+
 SEC("tracepoint/syscalls/sys_enter_openat")
 int trace_openat(void *ctx)
 {

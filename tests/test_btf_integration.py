@@ -82,6 +82,28 @@ class TestBtfMapProperties:
             if p.exists():
                 p.unlink()
 
+    def test_btf_float32_value_property(self, test_maps_bpf_path: Path) -> None:
+        """BpfMap.btf_value returns FLOAT type info for 32-bit float values."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            float_map = obj.maps["float32_values"]
+            btf_value = float_map.btf_value
+
+            assert btf_value is not None, "BTF value info missing for float32 map"
+            assert isinstance(btf_value, tinybpf.BtfType)
+            assert btf_value.kind == tinybpf.BtfKind.FLOAT
+            assert btf_value.size == 4
+
+    def test_btf_float64_value_property(self, test_maps_bpf_path: Path) -> None:
+        """BpfMap.btf_value returns FLOAT type info for 64-bit double values."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            double_map = obj.maps["float64_values"]
+            btf_value = double_map.btf_value
+
+            assert btf_value is not None, "BTF value info missing for float64 map"
+            assert isinstance(btf_value, tinybpf.BtfType)
+            assert btf_value.kind == tinybpf.BtfKind.FLOAT
+            assert btf_value.size == 8
+
 
 class TestTypedMethod:
     """Tests for BpfMap.typed() method."""
@@ -196,6 +218,71 @@ class TestBtfAutoInference:
 
             assert typed_result == 42
             assert isinstance(typed_result, int)
+
+    def test_auto_inference_float32_value(self, test_maps_bpf_path: Path) -> None:
+        """Map auto-infers FLOAT type from BTF for 32-bit float values."""
+        import struct
+
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            float_map = obj.maps["float32_values"]
+
+            # BTF must indicate FLOAT kind
+            btf_value = float_map.btf_value
+            assert btf_value is not None, "BTF required for FLOAT auto-inference test"
+            assert btf_value.kind == tinybpf.BtfKind.FLOAT, f"Expected FLOAT, got {btf_value.kind}"
+            assert btf_value.size == 4, f"Expected size 4 for float, got {btf_value.size}"
+
+            # Write a float value as bytes
+            float_value = 3.14159
+            float_map[0] = struct.pack("f", float_value)
+
+            # Read should auto-infer float from BTF
+            result = float_map[0]
+            assert isinstance(result, float), f"Expected float, got {type(result)}"
+            assert abs(result - float_value) < 0.0001, f"Expected ~{float_value}, got {result}"
+
+    def test_auto_inference_float64_value(self, test_maps_bpf_path: Path) -> None:
+        """Map auto-infers FLOAT type from BTF for 64-bit double values."""
+        import struct
+
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            double_map = obj.maps["float64_values"]
+
+            # BTF must indicate FLOAT kind
+            btf_value = double_map.btf_value
+            assert btf_value is not None, "BTF required for FLOAT auto-inference test"
+            assert btf_value.kind == tinybpf.BtfKind.FLOAT, f"Expected FLOAT, got {btf_value.kind}"
+            assert btf_value.size == 8, f"Expected size 8 for double, got {btf_value.size}"
+
+            # Write a double value as bytes
+            double_value = 3.141592653589793
+            double_map[0] = struct.pack("d", double_value)
+
+            # Read should auto-infer float (Python float is 64-bit) from BTF
+            result = double_map[0]
+            assert isinstance(result, float), f"Expected float, got {type(result)}"
+            assert abs(result - double_value) < 1e-10, f"Expected ~{double_value}, got {result}"
+
+    def test_auto_inference_float_iteration(self, test_maps_bpf_path: Path) -> None:
+        """Map iteration auto-infers FLOAT type from BTF."""
+        import struct
+
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            float_map = obj.maps["float32_values"]
+
+            # BTF must be present
+            assert float_map.btf_value is not None, "BTF required for FLOAT auto-inference test"
+
+            # Write some float values
+            float_map[0] = struct.pack("f", 1.5)
+            float_map[1] = struct.pack("f", 2.5)
+
+            # values() should return Python floats
+            values = list(float_map.values())
+            assert len(values) >= 2
+            # Check the ones we set (array may have other entries)
+            float_values = [v for v in values if isinstance(v, float) and v > 0]
+            assert len(float_values) >= 2, "Expected at least 2 non-zero float values"
 
 
 class TestBtfInspection:
