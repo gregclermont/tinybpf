@@ -21,7 +21,7 @@ LIMA_VENV := /tmp/tinybpf-venv
 # Linux targets (run directly on Linux)
 #
 compile-linux:
-	docker run --rm -v $(PROJECT_DIR):/src ghcr.io/gregclermont/tinybpf-compile tests/bpf/*.bpf.c
+	docker run --rm -v $(PROJECT_DIR):/src ghcr.io/gregclermont/tinybpf-compile tests/bpf/*.bpf.c examples/*/*.bpf.c
 
 setup-linux:
 	@test -f $(PROJECT_DIR)/src/tinybpf/_libbpf/libbpf.so.1 || \
@@ -85,7 +85,7 @@ setup-hooks:
 
 # Clean compiled objects
 clean:
-	rm -f tests/bpf/*.bpf.o
+	rm -f tests/bpf/*.bpf.o examples/*/*.bpf.o
 
 #
 # Linting and type checking (no OS dispatch needed)
