@@ -63,6 +63,32 @@ for key, event in obj.maps["events"].typed(value=Event).items():
 - `obj.program(name)` - Get program by name
 - Context manager support (`with` statement)
 
+### Type Registration
+
+Register Python types for BTF validation and automatic type inference:
+
+```python
+class Event(ctypes.Structure):
+    _fields_ = [("pid", ctypes.c_uint32), ("comm", ctypes.c_char * 16)]
+
+# Register type - validates against BTF metadata
+obj.register_type("event", Event)
+
+# Registered types are auto-validated in ring/perf buffers
+rb = BpfRingBuffer(obj.maps["events"], event_type=Event)  # auto-validates
+```
+
+- `obj.register_type(btf_name, python_type, validate_field_names=True)` - Register and validate a Python type against BTF struct
+- `obj.lookup_type(btf_name)` - Get registered Python type by BTF name (or None)
+- `obj.lookup_btf_name(python_type)` - Get BTF name for registered type (or None)
+
+Use `validate_field_names=False` to allow renamed fields in Python while keeping size/offset validation.
+
+Note: Event structs used only locally in BPF are optimized out of BTF. Add a global anchor:
+```c
+struct event _event_btf __attribute__((unused));
+```
+
 ### BpfProgram
 
 Attach methods:

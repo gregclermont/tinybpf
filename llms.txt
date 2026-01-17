@@ -22,6 +22,12 @@ with tinybpf.load("program.bpf.o") as obj:
     obj.maps      # Dict-like: MapCollection
     obj.program("name")  # -> BpfProgram
 
+# Type registration - register Python types for BTF validation
+obj.register_type("event", Event)  # validate and register ctypes.Structure
+obj.register_type("event", Event, validate_field_names=False)  # skip field name check
+obj.lookup_type("event")           # -> registered type or None
+obj.lookup_btf_name(Event)         # -> BTF name or None
+
 # Open pinned map from bpffs
 with tinybpf.open_pinned_map("/sys/fs/bpf/my_map") as map:
     ...
