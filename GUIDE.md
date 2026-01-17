@@ -80,6 +80,45 @@ if (bpf_core_field_exists(ctx->comm)) {
 
 Tracepoint event structs (like `trace_event_raw_sched_process_*`) are particularly prone to layout changes. Consider using kprobes/fentry with kernel helpers instead.
 
+## Typed Map Access
+
+### Config Maps
+
+A common pattern is using a single-entry array map to pass configuration from userspace to BPF:
+
+```python
+class Config(ctypes.Structure):
+    _fields_ = [
+        ("target_pid", ctypes.c_uint32),
+        ("enabled", ctypes.c_uint8),
+    ]
+
+# Write config to single-entry array map at index 0
+config_map = obj.maps["config"].typed(key=ctypes.c_uint32, value=Config)
+cfg = Config(target_pid=1234, enabled=1)
+config_map[0] = cfg
+
+# Read it back
+current = config_map[0]
+print(f"Filtering PID: {current.target_pid}")
+```
+
+### Iterating Typed Maps
+
+For maps with structured keys and values:
+
+```python
+class PortStats(ctypes.Structure):
+    _fields_ = [
+        ("connections", ctypes.c_uint64),
+        ("bytes_sent", ctypes.c_uint64),
+    ]
+
+stats_map = obj.maps["port_stats"].typed(key=ctypes.c_uint16, value=PortStats)
+for port, stats in stats_map.items():
+    print(f"Port {port}: {stats.connections} connections")
+```
+
 ## Event Struct Design
 
 When sending events from BPF to userspace via ring buffers or perf buffers, careful struct design ensures reliable data transfer.
@@ -241,6 +280,56 @@ bpftool btf dump file program.bpf.o | grep -A 10 "'event'"
 | `No such file or directory` on attach | Kernel function doesn't exist | Check function name spelling, kernel version |
 | CO-RE relocation failed | Struct field missing on target kernel | Use kernel helpers or `bpf_core_field_exists()` |
 | Events have garbage data | Struct layout mismatch | Verify C and Python structs match exactly |
+
+## Development Setup
+
+### CI Workflow
+
+Example GitHub Actions workflow to compile BPF programs and run tests:
+
+```yaml
+name: CI
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile eBPF programs
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/src \
+            ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c -o build/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf
+          pip install pytest
+
+      - name: Run tests
+        run: sudo pytest tests/ -v
+```
+
+### Local Development on macOS
+
+Since eBPF requires Linux, use [Lima](https://lima-vm.io/) to run a Linux VM:
+
+```bash
+# Create and start an Ubuntu VM
+limactl create --name=ebpf template:ubuntu-24.04
+limactl start ebpf
+
+# Run commands in the VM
+limactl shell ebpf -- sudo pytest /path/to/your/tests -v
+```
+
+You'll need to configure mounts for your project directory.
 
 ## See Also
 
