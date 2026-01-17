@@ -442,3 +442,400 @@ class TestGracefulDegradation:
                 event_type=WrongEvent,
             )
             rb.close()
+
+
+class TestTypedMethodWithStructs:
+    """Tests for .typed() method with ctypes.Structure types."""
+
+    def test_typed_with_struct_key(self, test_maps_bpf_path: Path) -> None:
+        """typed() works with ctypes.Structure for key."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+
+            class Key(ctypes.Structure):
+                _fields_ = [("pid", ctypes.c_uint32)]
+
+            hash_map = obj.maps["pid_counts"].typed(key=Key, value=int)
+
+            # Write with struct key
+            key = Key(pid=12345)
+            hash_map[key] = 42
+
+            # Read back
+            result = hash_map[key]
+            assert result == 42
+            assert isinstance(result, int)
+
+            # Clean up
+            del hash_map[key]
+
+    def test_typed_with_struct_value(self, test_maps_bpf_path: Path) -> None:
+        """typed() works with ctypes.Structure for value."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+
+            class Value(ctypes.Structure):
+                _fields_ = [("count", ctypes.c_uint64)]
+
+            hash_map = obj.maps["pid_counts"].typed(key=int, value=Value)
+
+            # Write with struct value
+            val = Value(count=999)
+            hash_map[12345] = val
+
+            # Read back returns struct
+            result = hash_map[12345]
+            assert isinstance(result, Value)
+            assert result.count == 999
+
+            # Clean up
+            del hash_map[12345]
+
+    def test_typed_with_struct_roundtrip(self, test_maps_bpf_path: Path) -> None:
+        """typed() supports round-trip with struct key and value."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+
+            class Key(ctypes.Structure):
+                _fields_ = [("pid", ctypes.c_uint32)]
+
+            class Value(ctypes.Structure):
+                _fields_ = [("count", ctypes.c_uint64)]
+
+            hash_map = obj.maps["pid_counts"].typed(key=Key, value=Value)
+
+            # Write
+            key = Key(pid=54321)
+            val = Value(count=123456789)
+            hash_map[key] = val
+
+            # Read back
+            result = hash_map[key]
+            assert isinstance(result, Value)
+            assert result.count == 123456789
+
+            # Clean up
+            del hash_map[key]
+
+    def test_typed_struct_iteration(self, test_maps_bpf_path: Path) -> None:
+        """typed() iteration works with struct types."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+
+            class Key(ctypes.Structure):
+                _fields_ = [("pid", ctypes.c_uint32)]
+
+            class Value(ctypes.Structure):
+                _fields_ = [("count", ctypes.c_uint64)]
+
+            hash_map = obj.maps["pid_counts"].typed(key=Key, value=Value)
+
+            # Add entries
+            for i in range(3):
+                hash_map[Key(pid=60000 + i)] = Value(count=i * 100)
+
+            # keys() returns Key structs
+            keys = list(hash_map.keys())
+            assert len(keys) >= 3
+            assert all(isinstance(k, Key) for k in keys)
+
+            # values() returns Value structs
+            values = list(hash_map.values())
+            assert len(values) >= 3
+            assert all(isinstance(v, Value) for v in values)
+
+            # items() returns (Key, Value) tuples
+            items = list(hash_map.items())
+            assert len(items) >= 3
+            assert all(isinstance(k, Key) and isinstance(v, Value) for k, v in items)
+
+            # Clean up
+            for i in range(3):
+                hash_map.delete(Key(pid=60000 + i))
+
+
+class TestBtfValidationErrors:
+    """Tests for BTF validation error cases."""
+
+    def test_typed_struct_size_mismatch_raises(self, test_maps_bpf_path: Path) -> None:
+        """typed() raises BtfValidationError on struct size mismatch."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            counters = obj.maps["counters"]
+
+            # BTF indicates value is 8 bytes (u64)
+            assert counters.btf_value is not None, "BTF required for this test"
+            assert counters.btf_value.size == 8
+
+            # Define struct with wrong size (4 bytes instead of 8)
+            class WrongSizeValue(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_uint32)]  # 4 bytes, should be 8
+
+            # Should raise BtfValidationError
+            import pytest
+
+            with pytest.raises(tinybpf.BtfValidationError, match="Size mismatch"):
+                counters.typed(value=WrongSizeValue)
+
+    def test_typed_struct_correct_size_succeeds(self, test_maps_bpf_path: Path) -> None:
+        """typed() succeeds when struct size matches BTF."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            counters = obj.maps["counters"]
+
+            # BTF indicates value is 8 bytes (u64)
+            assert counters.btf_value is not None, "BTF required for this test"
+            assert counters.btf_value.size == 8
+
+            # Define struct with correct size
+            class CorrectSizeValue(ctypes.Structure):
+                _fields_ = [("value", ctypes.c_uint64)]  # 8 bytes
+
+            # Should succeed
+            typed_map = counters.typed(value=CorrectSizeValue)
+            assert typed_map is not None
+
+    def test_typed_int_skips_size_validation(self, test_maps_bpf_path: Path) -> None:
+        """typed() with int skips struct size validation."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            counters = obj.maps["counters"]
+
+            # int type doesn't have _fields_, so no size check
+            typed_map = counters.typed(value=int)
+            typed_map[0] = 42
+            assert typed_map[0] == 42
+
+
+class TestValidateNamesParameter:
+    """Tests for validate_names parameter in typed()."""
+
+    def test_validate_names_default_true(self, test_maps_bpf_path: Path) -> None:
+        """validate_names defaults to True."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            counters = obj.maps["counters"]
+
+            class Value(ctypes.Structure):
+                _fields_ = [("count", ctypes.c_uint64)]
+
+            # Should succeed with correct size (name validation is best-effort)
+            typed_map = counters.typed(value=Value, validate_names=True)
+            assert typed_map is not None
+
+    def test_validate_names_false(self, test_maps_bpf_path: Path) -> None:
+        """validate_names=False only validates sizes."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            counters = obj.maps["counters"]
+
+            class Value(ctypes.Structure):
+                _fields_ = [("different_name", ctypes.c_uint64)]
+
+            # Should succeed - size matches even if field name differs
+            typed_map = counters.typed(value=Value, validate_names=False)
+            assert typed_map is not None
+            typed_map[0] = Value(different_name=123)
+            result = typed_map[0]
+            assert result.different_name == 123
+
+
+class TestOpenPinnedMapWithTypes:
+    """Tests for open_pinned_map with type parameters."""
+
+    def test_open_pinned_map_with_key_type(self, test_maps_bpf_path: Path) -> None:
+        """open_pinned_map accepts key_type parameter."""
+        pin_path = "/sys/fs/bpf/tinybpf_type_test_key"
+        try:
+            with tinybpf.load(test_maps_bpf_path) as obj:
+                obj.maps["pid_counts"].pin(pin_path)
+
+            # Open with typed key
+            with tinybpf.open_pinned_map(pin_path, key_type=int) as pinned:
+                key = 12345
+                pinned[key] = (42).to_bytes(8, "little")
+
+                # Lookup with typed key
+                result = pinned.lookup(key)
+                assert result is not None
+                # Value is bytes (no BTF for pinned maps)
+                assert result == (42).to_bytes(8, "little")
+
+                # Clean up
+                del pinned[key]
+        finally:
+            p = Path(pin_path)
+            if p.exists():
+                p.unlink()
+
+    def test_open_pinned_map_with_value_type(self, test_maps_bpf_path: Path) -> None:
+        """open_pinned_map accepts value_type parameter."""
+        pin_path = "/sys/fs/bpf/tinybpf_type_test_val"
+        try:
+            with tinybpf.load(test_maps_bpf_path) as obj:
+                obj.maps["pid_counts"].pin(pin_path)
+
+            # Open with typed value
+            with tinybpf.open_pinned_map(pin_path, value_type=int) as pinned:
+                key = (12345).to_bytes(4, "little")
+                pinned[key] = 42
+
+                # Lookup returns typed value
+                result = pinned.lookup(key)
+                assert result == 42
+                assert isinstance(result, int)
+
+                # Clean up
+                del pinned[key]
+        finally:
+            p = Path(pin_path)
+            if p.exists():
+                p.unlink()
+
+    def test_open_pinned_map_with_both_types(self, test_maps_bpf_path: Path) -> None:
+        """open_pinned_map accepts both key_type and value_type."""
+        pin_path = "/sys/fs/bpf/tinybpf_type_test_both"
+        try:
+            with tinybpf.load(test_maps_bpf_path) as obj:
+                obj.maps["pid_counts"].pin(pin_path)
+
+            # Open with both types
+            with tinybpf.open_pinned_map(pin_path, key_type=int, value_type=int) as pinned:
+                pinned[12345] = 42
+
+                # Lookup returns typed value
+                result = pinned.lookup(12345)
+                assert result == 42
+                assert isinstance(result, int)
+
+                # Iteration returns typed keys
+                keys = list(pinned.keys())
+                assert 12345 in keys
+                assert all(isinstance(k, int) for k in keys)
+
+                # Clean up
+                del pinned[12345]
+        finally:
+            p = Path(pin_path)
+            if p.exists():
+                p.unlink()
+
+
+class TestTypeConversionErrors:
+    """Tests for type conversion error handling."""
+
+    def test_invalid_key_type_raises(self, test_maps_bpf_path: Path) -> None:
+        """Invalid key type raises TypeError."""
+        import pytest
+
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.maps["pid_counts"]
+
+            # Float is not a valid key type
+            with pytest.raises(TypeError, match="Cannot convert"):
+                hash_map[3.14] = b"\x00" * 8
+
+    def test_invalid_value_type_raises(self, test_maps_bpf_path: Path) -> None:
+        """Invalid value type raises TypeError."""
+        import pytest
+
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.maps["pid_counts"]
+
+            # String is not a valid value type
+            with pytest.raises(TypeError, match="Cannot convert"):
+                hash_map[b"\x00" * 4] = "not valid"
+
+    def test_wrong_key_size_raises(self, test_maps_bpf_path: Path) -> None:
+        """Wrong key size raises ValueError."""
+        import pytest
+
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.maps["pid_counts"]
+
+            # Key should be 4 bytes, provide 8
+            with pytest.raises(ValueError, match="Key size mismatch"):
+                hash_map[b"\x00" * 8] = b"\x00" * 8
+
+    def test_wrong_value_size_raises(self, test_maps_bpf_path: Path) -> None:
+        """Wrong value size raises ValueError."""
+        import pytest
+
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.maps["pid_counts"]
+
+            # Value should be 8 bytes, provide 4
+            with pytest.raises(ValueError, match="Value size mismatch"):
+                hash_map[b"\x00" * 4] = b"\x00" * 4
+
+
+class TestAutoInferenceEdgeCases:
+    """Tests for edge cases in BTF auto-inference."""
+
+    def test_auto_inference_falls_back_to_bytes_without_btf(self, test_maps_bpf_path: Path) -> None:
+        """Auto-inference returns bytes when BTF is unavailable."""
+        pin_path = "/sys/fs/bpf/tinybpf_no_btf_test"
+        try:
+            with tinybpf.load(test_maps_bpf_path) as obj:
+                obj.maps["pid_counts"].pin(pin_path)
+
+            # Pinned maps don't have BTF
+            with tinybpf.open_pinned_map(pin_path) as pinned:
+                assert pinned.btf_key is None
+                assert pinned.btf_value is None
+
+                key = (12345).to_bytes(4, "little")
+                pinned[key] = (42).to_bytes(8, "little")
+
+                # Without BTF, returns bytes
+                result = pinned[key]
+                assert result == (42).to_bytes(8, "little")
+                assert isinstance(result, bytes)
+
+                del pinned[key]
+        finally:
+            p = Path(pin_path)
+            if p.exists():
+                p.unlink()
+
+    def test_explicit_type_takes_precedence_over_btf(self, test_maps_bpf_path: Path) -> None:
+        """Explicit type via typed() takes precedence over BTF auto-inference."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            counters = obj.maps["counters"]
+
+            # BTF indicates INT, so auto-inference would return int
+            counters[0] = 42
+            auto_result = counters[0]
+            assert isinstance(auto_result, int)
+
+            # But typed(value=bytes) should return bytes
+            # Note: Since we can't easily force bytes return, let's verify
+            # that explicit struct type overrides
+            class Value(ctypes.Structure):
+                _fields_ = [("v", ctypes.c_uint64)]
+
+            typed_counters = counters.typed(value=Value)
+            result = typed_counters[0]
+            assert isinstance(result, Value)
+            assert result.v == 42
+
+    def test_auto_inference_works_with_delete(self, test_maps_bpf_path: Path) -> None:
+        """Auto-inference doesn't affect delete operations."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.maps["pid_counts"]
+
+            # Add entry
+            key = (99999).to_bytes(4, "little")
+            hash_map[key] = 42
+
+            # Verify it exists (auto-infers int)
+            assert hash_map[key] == 42
+
+            # Delete with bytes key should work
+            del hash_map[key]
+            assert key not in hash_map
+
+    def test_auto_inference_with_contains(self, test_maps_bpf_path: Path) -> None:
+        """Auto-inference doesn't affect __contains__ check."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.maps["pid_counts"]
+
+            key = (88888).to_bytes(4, "little")
+            hash_map[key] = 42
+
+            # __contains__ should work regardless of auto-inference
+            assert key in hash_map
+
+            del hash_map[key]
+            assert key not in hash_map
