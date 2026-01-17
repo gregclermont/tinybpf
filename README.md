@@ -154,13 +154,15 @@ Typed events with auto-conversion:
 class Event(ctypes.Structure):
     _fields_ = [("pid", ctypes.c_uint32), ("comm", ctypes.c_char * 16)]
 
-# Callback receives Event instances
-rb = BpfRingBuffer(obj.maps["events"], handle, event_type=Event)
+# Without event_type: callback receives bytes, requires manual conversion
+def handle(data: bytes):
+    event = Event.from_buffer_copy(data)
 
-# Iterator mode also supports typed events
-rb = BpfRingBuffer(obj.maps["events"], event_type=Event)
-for event in rb:  # event is Event, not bytes
+# With event_type: callback receives Event directly (recommended)
+def handle(event: Event):
     print(event.pid)
+
+rb = BpfRingBuffer(obj.maps["events"], handle, event_type=Event)
 ```
 
 ### BpfPerfBuffer

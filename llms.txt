@@ -72,7 +72,7 @@ map.btf_value # -> BtfType or None (BTF type info for value)
 
 # BpfRingBuffer - stream events from BPF_MAP_TYPE_RINGBUF
 rb = BpfRingBuffer(map, callback=lambda data: ...)  # callback receives bytes
-rb = BpfRingBuffer(map, callback, event_type=Event)  # callback receives Event
+rb = BpfRingBuffer(map, callback, event_type=Event)  # callback receives Event (no from_buffer_copy needed)
 rb = BpfRingBuffer(map, callback, event_type=Event, validate_btf_struct="event")  # BTF validation
 rb = BpfRingBuffer()  # empty, then rb.add(map, callback) for multi-map
 rb.add(map, callback, event_type=Event)  # add map with typed events
