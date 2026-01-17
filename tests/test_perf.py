@@ -133,7 +133,7 @@ class TestBpfPerfBufferTyped:
         import ctypes
 
         class Event(ctypes.Structure):
-            _fields_ = [  # noqa: RUF012
+            _fields_ = [
                 ("pid", ctypes.c_uint32),
                 ("cpu", ctypes.c_uint32),
                 ("comm", ctypes.c_char * 16),

@@ -10,6 +10,7 @@ import contextlib
 import ctypes
 import errno
 import os
+import struct
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -18,6 +19,9 @@ from tinybpf._types import (
     BPF_ANY,
     BpfError,
     BpfMapType,
+    BtfKind,
+    BtfType,
+    BtfValidationError,
     MapInfo,
     _BpfMapInfoKernel,
     _check_err,
@@ -146,6 +150,127 @@ class BpfMap(Generic[KT, VT]):
         """Return True if this map was opened from a pinned path."""
         return self._owned_fd is not None
 
+    @property
+    def btf_key(self) -> BtfType | None:
+        """Return BTF type info for map key, or None if no BTF.
+
+        Returns:
+            BtfType describing the key type, or None if BTF is unavailable.
+        """
+        if self._obj is None or self._obj.btf is None:
+            return None
+        if self._ptr is None:
+            return None
+        lib = bindings._get_lib()
+        type_id = lib.bpf_map__btf_key_type_id(self._ptr)
+        if type_id == 0:
+            return None
+        return self._obj._resolve_btf_type(type_id)
+
+    @property
+    def btf_value(self) -> BtfType | None:
+        """Return BTF type info for map value, or None if no BTF.
+
+        Returns:
+            BtfType describing the value type, or None if BTF is unavailable.
+        """
+        if self._obj is None or self._obj.btf is None:
+            return None
+        if self._ptr is None:
+            return None
+        lib = bindings._get_lib()
+        type_id = lib.bpf_map__btf_value_type_id(self._ptr)
+        if type_id == 0:
+            return None
+        return self._obj._resolve_btf_type(type_id)
+
+    def typed(
+        self,
+        *,
+        key: builtins.type[KT] | None = None,
+        value: builtins.type[VT] | None = None,
+        validate_names: bool = True,
+    ) -> BpfMap[KT, VT]:
+        """Return a new typed view of this map with BTF validation.
+
+        Creates a typed view that auto-converts keys and values during
+        read operations. If BTF metadata is available, validates the
+        Python types against it.
+
+        Args:
+            key: Type for keys (int or ctypes.Structure subclass).
+            value: Type for values (int or ctypes.Structure subclass).
+            validate_names: If True, validate field names match BTF.
+                           If False, only validate sizes and offsets.
+
+        Returns:
+            A new BpfMap instance with type conversion enabled.
+
+        Raises:
+            BtfValidationError: If Python type doesn't match BTF metadata.
+
+        Example:
+            # Get typed map view with validation
+            counters = obj.maps["counters"].typed(key=int, value=int)
+            counters[0] = 42
+            assert isinstance(counters[0], int)
+
+            # Typed struct access
+            class Event(ctypes.Structure):
+                _fields_ = [("pid", c_uint32), ("comm", c_char * 16)]
+
+            events = obj.maps["events"].typed(value=Event)
+        """
+        if value is not None:
+            self._validate_type(value, self.btf_value, validate_names)
+        if key is not None:
+            self._validate_type(key, self.btf_key, validate_names)
+
+        return BpfMap(
+            self._ptr,
+            self._obj,
+            owned_fd=self._owned_fd,
+            name=self._name,
+            map_type=self._type,
+            key_size=self._key_size,
+            value_size=self._value_size,
+            max_entries=self._max_entries,
+            key_type=key,
+            value_type=value,
+        )
+
+    def _validate_type(
+        self,
+        python_type: builtins.type,
+        btf_type: BtfType | None,
+        validate_names: bool,
+    ) -> None:
+        """Validate Python type against BTF type.
+
+        Args:
+            python_type: The Python type to validate.
+            btf_type: The BTF type to validate against (None if no BTF).
+            validate_names: Whether to validate field names.
+
+        Raises:
+            BtfValidationError: If validation fails.
+        """
+        # Size check (always, for ctypes structures)
+        if hasattr(python_type, "_fields_"):
+            py_size = ctypes.sizeof(python_type)
+            if btf_type is not None and btf_type.size is not None and py_size != btf_type.size:
+                raise BtfValidationError(
+                    f"Size mismatch: {python_type.__name__} is {py_size} bytes, "
+                    f"BTF type '{btf_type.name}' is {btf_type.size} bytes"
+                )
+
+        if btf_type is None:
+            return  # No BTF, skip further validation
+
+        # Delegate to object's validation if available
+        if self._obj is not None:
+            self._obj._validate_python_type(python_type, btf_type, validate_names)
+
     def _check_open(self) -> None:
         """Raise if map is not usable."""
         if self._closed:
@@ -181,22 +306,46 @@ class BpfMap(Generic[KT, VT]):
 
     def _from_key_bytes(self, data: bytes) -> KT:
         """Convert bytes to key type."""
-        if self._key_type is None:
+        if self._key_type is not None:
+            # Explicit type provided - use it
+            if self._key_type is int:
+                return int.from_bytes(data, byteorder="little")  # type: ignore
+            if issubclass(self._key_type, ctypes.Structure):
+                return self._key_type.from_buffer_copy(data)
             return data  # type: ignore
-        if self._key_type is int:
-            return int.from_bytes(data, byteorder="little")  # type: ignore
-        if issubclass(self._key_type, ctypes.Structure):
-            return self._key_type.from_buffer_copy(data)
+
+        # No explicit type - check BTF for auto-inference
+        btf_type = self.btf_key
+        if btf_type is not None:
+            if btf_type.kind == BtfKind.INT:
+                return int.from_bytes(data, byteorder="little")  # type: ignore
+            if btf_type.kind == BtfKind.FLOAT:
+                fmt = "f" if len(data) == 4 else "d"
+                return struct.unpack(fmt, data)[0]
+
+        # Fallback: return bytes
         return data  # type: ignore
 
     def _from_value_bytes(self, data: bytes) -> VT:
         """Convert bytes to value type."""
-        if self._value_type is None:
+        if self._value_type is not None:
+            # Explicit type provided - use it
+            if self._value_type is int:
+                return int.from_bytes(data, byteorder="little")  # type: ignore
+            if issubclass(self._value_type, ctypes.Structure):
+                return self._value_type.from_buffer_copy(data)
             return data  # type: ignore
-        if self._value_type is int:
-            return int.from_bytes(data, byteorder="little")  # type: ignore
-        if issubclass(self._value_type, ctypes.Structure):
-            return self._value_type.from_buffer_copy(data)
+
+        # No explicit type - check BTF for auto-inference
+        btf_type = self.btf_value
+        if btf_type is not None:
+            if btf_type.kind == BtfKind.INT:
+                return int.from_bytes(data, byteorder="little")  # type: ignore
+            if btf_type.kind == BtfKind.FLOAT:
+                fmt = "f" if len(data) == 4 else "d"
+                return struct.unpack(fmt, data)[0]
+
+        # Fallback: return bytes
         return data  # type: ignore
 
     def lookup(self, key: KT) -> VT | None:

@@ -16,6 +16,7 @@ from tinybpf._libbpf import bindings
 from tinybpf._types import (
     BpfError,
     BpfMapType,
+    BtfKind,
     RingBufferEvent,
     _check_err,
     _check_ptr,
@@ -81,6 +82,8 @@ class BpfRingBuffer(Generic[T]):
         map: BpfMap[Any, Any] | None = None,
         callback: Callable[[bytes], int] | Callable[[memoryview], int] | None = None,
         as_memoryview: bool = False,
+        *,
+        btf_name: str | None = None,
     ) -> None: ...
 
     @overload
@@ -91,6 +94,7 @@ class BpfRingBuffer(Generic[T]):
         as_memoryview: bool = False,
         *,
         event_type: type[T],
+        btf_name: str | None = None,
     ) -> None: ...
 
     def __init__(
@@ -100,6 +104,7 @@ class BpfRingBuffer(Generic[T]):
         as_memoryview: bool = False,
         *,
         event_type: type[Any] = bytes,
+        btf_name: str | None = None,
     ) -> None:
         """Create ring buffer consumer.
 
@@ -134,10 +139,14 @@ class BpfRingBuffer(Generic[T]):
                      ctypes.Structure subclass to have events auto-converted.
                      Defaults to bytes (no conversion). Cannot be combined
                      with as_memoryview=True.
+            btf_name: BTF struct name to validate against. If None, uses
+                     event_type.__name__. Use this when Python class name
+                     differs from BTF struct name (e.g., PascalCase vs snake_case).
 
         Raises:
             ValueError: If callback is provided without map.
             BpfError: If as_memoryview=True without callback or with event_type.
+            BtfValidationError: If event_type doesn't match BTF metadata.
         """
         # Set _closed early so __del__ works if __init__ raises
         self._closed = True
@@ -169,6 +178,7 @@ class BpfRingBuffer(Generic[T]):
 
         # Event type tracking for typed events
         self._event_type: type[Any] = event_type
+        self._btf_name: str | None = btf_name
         # Per-map event types for callback mode (callback per map can have different types)
         self._per_map_event_types: dict[str, type[Any]] = {}
 
@@ -178,7 +188,52 @@ class BpfRingBuffer(Generic[T]):
         self._closed = False
 
         if map is not None:
+            # Validate event_type against BTF if available
+            if event_type is not bytes:
+                self._validate_event_type(map, event_type, btf_name)
             self.add(map, callback, as_memoryview=as_memoryview, event_type=event_type)
+
+    def _validate_event_type(
+        self,
+        map: BpfMap[Any, Any],
+        event_type: type,
+        btf_name: str | None,
+    ) -> None:
+        """Validate event_type against BTF metadata.
+
+        Validation is best-effort: if BTF is not available or the struct
+        is not found in BTF, validation is silently skipped. Errors are
+        only raised for actual mismatches (size, field count, etc.).
+
+        Args:
+            map: The ring buffer map (used to get BTF from parent object).
+            event_type: The Python type to validate.
+            btf_name: Override BTF struct name (defaults to event_type.__name__).
+
+        Raises:
+            BtfValidationError: If validation finds a mismatch.
+        """
+        # Get BTF from map's parent object
+        btf = map._obj.btf if map._obj else None
+        if btf is None:
+            # Graceful degradation - no BTF validation
+            return
+
+        lookup_name = btf_name or event_type.__name__
+        lib = bindings._get_lib()
+
+        # Find the BTF struct by name
+        type_id = lib.btf__find_by_name_kind(btf, lookup_name.encode(), BtfKind.STRUCT)
+
+        if type_id < 0:
+            # Struct not found in BTF - gracefully skip validation
+            # This is common when BTF doesn't include all struct names
+            return
+
+        # Resolve and validate
+        btf_type = map._obj._resolve_btf_type(type_id) if map._obj else None
+        if btf_type is not None and map._obj is not None:
+            map._obj._validate_python_type(event_type, btf_type, validate_names=True)
 
     @overload
     def add(
@@ -186,6 +241,8 @@ class BpfRingBuffer(Generic[T]):
         map: BpfMap[Any, Any],
         callback: Callable[[bytes], int] | Callable[[memoryview], int] | None = None,
         as_memoryview: bool | None = None,
+        *,
+        btf_name: str | None = None,
     ) -> None: ...
 
     @overload
@@ -196,6 +253,7 @@ class BpfRingBuffer(Generic[T]):
         as_memoryview: bool | None = None,
         *,
         event_type: type[T],
+        btf_name: str | None = None,
     ) -> None: ...
 
     def add(  # noqa: PLR0912
@@ -205,6 +263,7 @@ class BpfRingBuffer(Generic[T]):
         as_memoryview: bool | None = None,
         *,
         event_type: type[Any] | None = None,
+        btf_name: str | None = None,
     ) -> None:
         """Add a ring buffer map to this consumer.
 
@@ -220,10 +279,14 @@ class BpfRingBuffer(Generic[T]):
                      ctypes.Structure subclass to have events auto-converted.
                      If None, uses the instance default from constructor.
                      In iterator mode, all maps must use the same event_type.
+            btf_name: BTF struct name to validate against. If None, uses
+                     event_type.__name__. Use when Python class name differs
+                     from BTF struct name.
 
         Raises:
             BpfError: If ring buffer is closed, map type is wrong,
                      map already added, modes are mixed, or libbpf call fails.
+            BtfValidationError: If event_type doesn't match BTF metadata.
         """
         self._check_open()
 
@@ -277,6 +340,12 @@ class BpfRingBuffer(Generic[T]):
         else:
             # Callback mode: track per-map event types
             self._per_map_event_types[map.name] = use_event_type
+
+        # Validate event_type against BTF if applicable
+        # Use btf_name parameter or fall back to instance default
+        use_btf_name = btf_name if btf_name is not None else self._btf_name
+        if use_event_type is not bytes:
+            self._validate_event_type(map, use_event_type, use_btf_name)
 
         # Create ctypes callback wrapper
         if callback is not None:
@@ -712,6 +781,8 @@ class BpfPerfBuffer(Generic[T]):
         sample_callback: Callable[[int, bytes], None],
         lost_callback: Callable[[int, int], None] | None = None,
         page_count: int = 8,
+        *,
+        btf_name: str | None = None,
     ) -> None: ...
 
     @overload
@@ -723,6 +794,7 @@ class BpfPerfBuffer(Generic[T]):
         page_count: int = 8,
         *,
         event_type: type[T],
+        btf_name: str | None = None,
     ) -> None: ...
 
     def __init__(
@@ -733,6 +805,7 @@ class BpfPerfBuffer(Generic[T]):
         page_count: int = 8,
         *,
         event_type: type[Any] = bytes,
+        btf_name: str | None = None,
     ) -> None:
         """Create perf buffer consumer.
 
@@ -749,10 +822,14 @@ class BpfPerfBuffer(Generic[T]):
             event_type: Type for automatic event conversion. Pass a
                      ctypes.Structure subclass to have events auto-converted.
                      Defaults to bytes (no conversion).
+            btf_name: BTF struct name to validate against. If None, uses
+                     event_type.__name__. Use this when Python class name
+                     differs from BTF struct name (e.g., PascalCase vs snake_case).
 
         Raises:
             BpfError: If map is not a perf event array type.
             ValueError: If page_count is not a power of 2.
+            BtfValidationError: If event_type doesn't match BTF metadata.
         """
         # Set _closed early so __del__ works if __init__ raises
         self._closed = True
@@ -762,6 +839,10 @@ class BpfPerfBuffer(Generic[T]):
 
         if page_count <= 0 or (page_count & (page_count - 1)) != 0:
             raise ValueError(f"page_count must be a power of 2, got {page_count}")
+
+        # Validate event_type against BTF if available
+        if event_type is not bytes:
+            self._validate_event_type(map, event_type, btf_name)
 
         self._map = map
         self._obj = map._obj  # For use-after-close detection
@@ -813,6 +894,48 @@ class BpfPerfBuffer(Generic[T]):
             exc = self._stored_exception
             self._stored_exception = None
             raise exc
+
+    def _validate_event_type(
+        self,
+        map: BpfMap[Any, Any],
+        event_type: type,
+        btf_name: str | None,
+    ) -> None:
+        """Validate event_type against BTF metadata.
+
+        Validation is best-effort: if BTF is not available or the struct
+        is not found in BTF, validation is silently skipped. Errors are
+        only raised for actual mismatches (size, field count, etc.).
+
+        Args:
+            map: The perf buffer map (used to get BTF from parent object).
+            event_type: The Python type to validate.
+            btf_name: Override BTF struct name (defaults to event_type.__name__).
+
+        Raises:
+            BtfValidationError: If validation finds a mismatch.
+        """
+        # Get BTF from map's parent object
+        btf = map._obj.btf if map._obj else None
+        if btf is None:
+            # Graceful degradation - no BTF validation
+            return
+
+        lookup_name = btf_name or event_type.__name__
+        lib = bindings._get_lib()
+
+        # Find the BTF struct by name
+        type_id = lib.btf__find_by_name_kind(btf, lookup_name.encode(), BtfKind.STRUCT)
+
+        if type_id < 0:
+            # Struct not found in BTF - gracefully skip validation
+            # This is common when BTF doesn't include all struct names
+            return
+
+        # Resolve and validate
+        btf_type = map._obj._resolve_btf_type(type_id) if map._obj else None
+        if btf_type is not None and map._obj is not None:
+            map._obj._validate_python_type(event_type, btf_type, validate_names=True)
 
     def poll(self, timeout_ms: int = -1) -> int:
         """Poll for events from all CPUs.

@@ -386,7 +386,7 @@ class TestBpfRingBufferTyped:
         import ctypes
 
         class Event(ctypes.Structure):
-            _fields_ = [  # noqa: RUF012
+            _fields_ = [
                 ("pid", ctypes.c_uint32),
                 ("tid", ctypes.c_uint32),
                 ("comm", ctypes.c_char * 16),
@@ -418,7 +418,7 @@ class TestBpfRingBufferTyped:
         import ctypes
 
         class Event(ctypes.Structure):
-            _fields_ = [  # noqa: RUF012
+            _fields_ = [
                 ("pid", ctypes.c_uint32),
                 ("tid", ctypes.c_uint32),
                 ("comm", ctypes.c_char * 16),
@@ -462,7 +462,7 @@ class TestBpfRingBufferTyped:
         import ctypes
 
         class Event(ctypes.Structure):
-            _fields_ = [("pid", ctypes.c_uint32)]  # noqa: RUF012
+            _fields_ = [("pid", ctypes.c_uint32)]
 
         with tinybpf.load(ringbuf_bpf_path) as obj:
             with pytest.raises(tinybpf.BpfError, match="Cannot use as_memoryview"):
@@ -478,14 +478,14 @@ class TestBpfRingBufferTyped:
         import ctypes
 
         class Event1(ctypes.Structure):
-            _fields_ = [  # noqa: RUF012
+            _fields_ = [
                 ("pid", ctypes.c_uint32),
                 ("tid", ctypes.c_uint32),
                 ("comm", ctypes.c_char * 16),
             ]
 
         class Event2(ctypes.Structure):
-            _fields_ = [  # noqa: RUF012
+            _fields_ = [
                 ("pid", ctypes.c_uint32),
                 ("tid", ctypes.c_uint32),
                 ("comm", ctypes.c_char * 16),
@@ -523,7 +523,7 @@ class TestBpfRingBufferTyped:
         import ctypes
 
         class Event(ctypes.Structure):
-            _fields_ = [  # noqa: RUF012
+            _fields_ = [
                 ("pid", ctypes.c_uint32),
                 ("tid", ctypes.c_uint32),
                 ("comm", ctypes.c_char * 16),
@@ -550,10 +550,10 @@ class TestBpfRingBufferTyped:
         import ctypes
 
         class Event1(ctypes.Structure):
-            _fields_ = [("pid", ctypes.c_uint32)]  # noqa: RUF012
+            _fields_ = [("pid", ctypes.c_uint32)]
 
         class Event2(ctypes.Structure):
-            _fields_ = [("tid", ctypes.c_uint32)]  # noqa: RUF012
+            _fields_ = [("tid", ctypes.c_uint32)]
 
         with tinybpf.load(ringbuf_bpf_path) as obj:
             rb = tinybpf.BpfRingBuffer()

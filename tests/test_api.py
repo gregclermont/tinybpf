@@ -28,11 +28,15 @@ def test_exports() -> None:
         # Data classes
         "MapInfo",
         "ProgramInfo",
+        "BtfType",
+        "BtfField",
         # Enums
         "BpfMapType",
         "BpfProgType",
+        "BtfKind",
         # Exceptions
         "BpfError",
+        "BtfValidationError",
         # Constants
         "BPF_ANY",
         "BPF_NOEXIST",
