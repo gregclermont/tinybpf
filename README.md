@@ -123,6 +123,39 @@ events = obj.maps["events"].typed(value=Event)
 event = events[pid]  # Event instance
 ```
 
+Config maps with structs:
+
+```python
+class Config(ctypes.Structure):
+    _fields_ = [
+        ("target_pid", ctypes.c_uint32),
+        ("enabled", ctypes.c_uint8),
+    ]
+
+# Write config to single-entry array map at index 0
+config_map = obj.maps["config"].typed(key=ctypes.c_uint32, value=Config)
+cfg = Config(target_pid=1234, enabled=1)
+config_map[0] = cfg
+
+# Read it back
+current = config_map[0]
+print(f"Filtering PID: {current.target_pid}")
+```
+
+Iterating typed maps:
+
+```python
+class PortStats(ctypes.Structure):
+    _fields_ = [
+        ("connections", ctypes.c_uint64),
+        ("bytes_sent", ctypes.c_uint64),
+    ]
+
+stats_map = obj.maps["port_stats"].typed(key=ctypes.c_uint16, value=PortStats)
+for port, stats in stats_map.items():
+    print(f"Port {port}: {stats.connections} connections")
+```
+
 Pinning (for maps from `BpfObject`):
 - `map.pin(path)` - Pin to bpffs
 - `map.unpin(path)` - Remove pin
