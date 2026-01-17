@@ -241,6 +241,16 @@ Key points:
 - Python ctypes struct must exactly match C layout including padding
 - Validate `len(data)` before `from_buffer_copy()` to avoid reading garbage
 
+**Alternative:** If you don't need strict ordering across event types, use separate ring buffers with multi-map and typed callbacks:
+
+```python
+rb = BpfRingBuffer()
+rb.add(obj.maps["exec_events"], handle_exec, event_type=ExecEvent)
+rb.add(obj.maps["exit_events"], handle_exit, event_type=ExitEvent)
+```
+
+This avoids manual type discrimination entirely.
+
 ### BpfPerfBuffer
 
 Stream events from `BPF_MAP_TYPE_PERF_EVENT_ARRAY` maps:
