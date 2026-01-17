@@ -13,11 +13,17 @@
 import ctypes
 import signal
 from pathlib import Path
+from typing import Callable
 
 import tinybpf
 
 EVENT_EXEC = 1
 EVENT_EXIT = 2
+
+
+# -----------------------------------------------------------------------------
+# Event struct definitions (must match BPF side)
+# -----------------------------------------------------------------------------
 
 
 class ExecEvent(ctypes.Structure):
@@ -40,24 +46,77 @@ class ExitEvent(ctypes.Structure):
     ]
 
 
-def handle_event(data: bytes) -> int:
-    """Dispatch to correct type based on discriminator at offset 8."""
-    if len(data) < 9:
+# -----------------------------------------------------------------------------
+# EventDispatcher - reusable pattern for polymorphic ring buffer events
+# -----------------------------------------------------------------------------
+
+
+class EventDispatcher:
+    """Dispatch ring buffer events to handlers based on a discriminator field.
+
+    Copy this class into your project and adapt as needed.
+
+    Usage:
+        dispatcher = EventDispatcher(
+            discriminator_offset=8,  # byte offset of type field
+            discriminator_size=1,    # 1=u8, 2=u16, 4=u32
+        )
+        dispatcher.register(EVENT_EXEC, ExecEvent, handle_exec)
+        dispatcher.register(EVENT_EXIT, ExitEvent, handle_exit)
+
+        rb = tinybpf.BpfRingBuffer(map, dispatcher)
+    """
+
+    def __init__(self, discriminator_offset: int, discriminator_size: int = 1):
+        self.offset = discriminator_offset
+        self.size = discriminator_size
+        self.handlers: dict[int, tuple[type[ctypes.Structure], Callable]] = {}
+
+    def register(
+        self,
+        type_value: int,
+        struct_type: type[ctypes.Structure],
+        handler: Callable,
+    ) -> "EventDispatcher":
+        """Register a handler for an event type. Returns self for chaining."""
+        self.handlers[type_value] = (struct_type, handler)
+        return self
+
+    def __call__(self, data: bytes) -> int:
+        """Ring buffer callback - dispatches to registered handler."""
+        if len(data) < self.offset + self.size:
+            return 0
+
+        type_value = int.from_bytes(
+            data[self.offset : self.offset + self.size], byteorder="little"
+        )
+
+        entry = self.handlers.get(type_value)
+        if entry is None:
+            return 0
+
+        struct_type, handler = entry
+        if len(data) < ctypes.sizeof(struct_type):
+            return 0
+
+        event = struct_type.from_buffer_copy(data)
+        handler(event)
         return 0
 
-    event_type = data[8]
 
-    if event_type == EVENT_EXEC and len(data) >= ctypes.sizeof(ExecEvent):
-        event = ExecEvent.from_buffer_copy(data)
-        ts_ms = event.timestamp / 1_000_000
-        print(f"{ts_ms:>12.3f} EXEC  pid={event.pid:<6} {event.comm.decode()}")
+# -----------------------------------------------------------------------------
+# Event handlers
+# -----------------------------------------------------------------------------
 
-    elif event_type == EVENT_EXIT and len(data) >= ctypes.sizeof(ExitEvent):
-        event = ExitEvent.from_buffer_copy(data)
-        ts_ms = event.timestamp / 1_000_000
-        print(f"{ts_ms:>12.3f} EXIT  pid={event.pid:<6} code={event.exit_code}")
 
-    return 0
+def handle_exec(event: ExecEvent) -> None:
+    ts_ms = event.timestamp / 1_000_000
+    print(f"{ts_ms:>12.3f} EXEC  pid={event.pid:<6} {event.comm.decode()}")
+
+
+def handle_exit(event: ExitEvent) -> None:
+    ts_ms = event.timestamp / 1_000_000
+    print(f"{ts_ms:>12.3f} EXIT  pid={event.pid:<6} code={event.exit_code}")
 
 
 def main() -> None:
@@ -70,8 +129,13 @@ def main() -> None:
         link_exit = obj.programs["trace_exit"].attach()
         print("Attached to sys_enter_execve and sched_process_exit. Press Ctrl+C to exit.\n")
 
-        # Ring buffer without event_type - we handle dispatch manually
-        rb = tinybpf.BpfRingBuffer(obj.maps["events"], handle_event)
+        # Set up dispatcher for polymorphic events
+        # Discriminator is at offset 8 (after timestamp), size 1 byte (u8)
+        dispatcher = EventDispatcher(discriminator_offset=8, discriminator_size=1)
+        dispatcher.register(EVENT_EXEC, ExecEvent, handle_exec)
+        dispatcher.register(EVENT_EXIT, ExitEvent, handle_exit)
+
+        rb = tinybpf.BpfRingBuffer(obj.maps["events"], dispatcher)
 
         running = True
 
