@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import errno
 from collections import deque
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, overload
 
@@ -527,7 +528,7 @@ class BpfRingBuffer(Generic[T]):
         """
         return self.epoll_fd()
 
-    def poll(self, timeout_ms: int = -1) -> int:
+    def poll(self, timeout_ms: int = -1, ignore_eintr: bool = True) -> int:
         """Poll for events (blocking).
 
         Waits for events and processes them. In callback mode, callbacks
@@ -536,9 +537,14 @@ class BpfRingBuffer(Generic[T]):
         Args:
             timeout_ms: Timeout in milliseconds. -1 for infinite wait,
                        0 for non-blocking.
+            ignore_eintr: If True (default), return 0 when interrupted by a
+                       signal (EINTR) instead of raising BpfError. This is the
+                       common case for graceful shutdown with signal handlers.
+                       Set to False to raise BpfError on EINTR.
 
         Returns:
-            Number of events consumed.
+            Number of events consumed, or 0 if interrupted by signal and
+            ignore_eintr is True.
 
         Raises:
             BpfError: On system error or if no maps have been added.
@@ -550,6 +556,8 @@ class BpfRingBuffer(Generic[T]):
         lib = bindings._get_lib()
         ret = lib.ring_buffer__poll(self._ptr, timeout_ms)
         self._check_and_reraise()
+        if ret < 0 and abs(ret) == errno.EINTR and ignore_eintr:
+            return 0
         _check_err(ret, "ring_buffer__poll")
         return ret
 
@@ -1073,15 +1081,20 @@ class BpfPerfBuffer(Generic[T]):
                 event_type, btf_type, validate_field_names=validate_field_names
             )
 
-    def poll(self, timeout_ms: int = -1) -> int:
+    def poll(self, timeout_ms: int = -1, ignore_eintr: bool = True) -> int:
         """Poll for events from all CPUs.
 
         Args:
             timeout_ms: Timeout in milliseconds. -1 for infinite wait,
                        0 for non-blocking.
+            ignore_eintr: If True (default), return 0 when interrupted by a
+                       signal (EINTR) instead of raising BpfError. This is the
+                       common case for graceful shutdown with signal handlers.
+                       Set to False to raise BpfError on EINTR.
 
         Returns:
-            Number of events consumed.
+            Number of events consumed, or 0 if interrupted by signal and
+            ignore_eintr is True.
 
         Raises:
             BpfError: On system error.
@@ -1091,6 +1104,8 @@ class BpfPerfBuffer(Generic[T]):
         lib = bindings._get_lib()
         ret = lib.perf_buffer__poll(self._ptr, timeout_ms)
         self._check_and_reraise()
+        if ret < 0 and abs(ret) == errno.EINTR and ignore_eintr:
+            return 0
         _check_err(ret, "perf_buffer__poll")
         return ret
 
