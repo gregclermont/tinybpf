@@ -3,10 +3,10 @@
 # Commands auto-detect OS:
 #   make setup    # Download libbpf (Linux: direct, macOS: via Lima)
 #   make test     # Run tests (Linux: direct, macOS: via Lima)
-#   make compile  # Compile eBPF (Docker, works anywhere)
+#   make compile  # Compile eBPF (Linux: local Docker, macOS: Docker in Lima)
 #
 # macOS-only:
-#   make lima-create   # One-time VM setup
+#   make lima-create   # One-time VM setup (Ubuntu + Docker)
 #   make lima-shell    # Shell into VM at project dir
 #   make lima-delete   # Remove VM
 
@@ -17,13 +17,12 @@ ARCH := $(shell uname -m)
 # Use separate venv in Lima VM to avoid conflicts with macOS host
 LIMA_VENV := /tmp/tinybpf-venv
 
-# Compile eBPF programs using Docker (works on any OS)
-compile:
-	docker run --rm -v $(PROJECT_DIR):/src ghcr.io/gregclermont/tinybpf-compile tests/bpf/*.bpf.c
-
 #
 # Linux targets (run directly on Linux)
 #
+compile-linux:
+	docker run --rm -v $(PROJECT_DIR):/src ghcr.io/gregclermont/tinybpf-compile tests/bpf/*.bpf.c
+
 setup-linux:
 	@test -f $(PROJECT_DIR)/src/tinybpf/_libbpf/libbpf.so.1 || \
 		(echo "Downloading libbpf..." && \
@@ -38,10 +37,13 @@ test-linux: compile setup-linux
 # macOS/Lima targets (run Linux targets inside Lima VM)
 #
 lima-create:
-	limactl create --name=$(LIMA_VM) --tty=false template:ubuntu-24.04
+	limactl create --name=$(LIMA_VM) --tty=false template:docker
 	@echo "Configuring mount for $(PROJECT_DIR)..."
 	@sed -i '' 's|- location: "~"|  - location: "$(PROJECT_DIR)"\n    writable: true|' ~/.lima/$(LIMA_VM)/lima.yaml
 	limactl start $(LIMA_VM)
+	@echo "Installing make..."
+	limactl shell $(LIMA_VM) -- sudo apt-get update -qq
+	limactl shell $(LIMA_VM) -- sudo apt-get install -qq -y make
 	@echo "Installing uv..."
 	limactl shell $(LIMA_VM) -- bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 	@echo "Configuring uv to use separate venv for interactive shells..."
@@ -54,9 +56,10 @@ lima-delete:
 lima-shell:
 	limactl shell --workdir $(PROJECT_DIR) $(LIMA_VM)
 
+compile-lima:
+	limactl shell $(LIMA_VM) -- make -C $(PROJECT_DIR) compile-linux
+
 setup-lima:
-	@limactl shell $(LIMA_VM) -- which make > /dev/null || \
-		(echo "Installing make..." && limactl shell $(LIMA_VM) -- sudo apt-get update -qq && limactl shell $(LIMA_VM) -- sudo apt-get install -qq -y make)
 	limactl shell $(LIMA_VM) -- make -C $(PROJECT_DIR) setup-linux
 
 test-lima: compile setup-lima
@@ -66,9 +69,11 @@ test-lima: compile setup-lima
 # Auto-detect OS and dispatch to appropriate target
 #
 ifeq ($(UNAME),Darwin)
+compile: compile-lima
 setup: setup-lima
 test: test-lima
 else
+compile: compile-linux
 setup: setup-linux
 test: test-linux
 endif
@@ -102,4 +107,4 @@ typecheck:
 
 check: format-check lint typecheck
 
-.PHONY: compile setup-linux test-linux lima-create lima-delete lima-shell setup-lima test-lima setup test setup-hooks clean lint lint-fix format format-check typecheck check
+.PHONY: compile compile-linux compile-lima setup-linux test-linux lima-create lima-delete lima-shell setup-lima test-lima setup test setup-hooks clean lint lint-fix format format-check typecheck check
