@@ -56,3 +56,47 @@ src/tinybpf/
 - eBPF test programs (`tests/bpf/*.bpf.c`) are compiled using `ghcr.io/gregclermont/tinybpf-compile` Docker image
 - Wheels are architecture-specific (manylinux_2_28_x86_64, manylinux_2_28_aarch64)
 - libbpf version is pinned in `.libbpf-version` file
+
+## Compiling and Debugging BPF Programs
+
+### Compiling BPF Programs (macOS or Linux)
+
+Use the Docker image to compile BPF programs:
+```bash
+# Compile a single file
+docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile tests/bpf/myprogram.bpf.c
+
+# Compile all test BPF programs
+make compile
+```
+
+### Inspecting BTF Information
+
+On the lima VM (or any Linux with bpftool):
+```bash
+# Dump all BTF types
+limactl shell tinybpf -- bpftool btf dump file tests/bpf/myprogram.bpf.o
+
+# Search for a specific struct
+limactl shell tinybpf -- bpftool btf dump file tests/bpf/myprogram.bpf.o | grep -A 10 "'mystruct'"
+```
+
+### Exporting Structs to BTF
+
+Event structs used in ring/perf buffers are NOT automatically included in BTF.
+To make a struct available for BTF validation, "anchor" it using one of:
+
+```c
+// Method 1: Global variable (recommended)
+struct event _event_anchor __attribute__((unused));
+
+// Method 2: BTF_TYPE_EMIT macro (if available in your vmlinux.h)
+BTF_TYPE_EMIT(struct event);
+```
+
+### Running Python Scripts in Lima VM
+
+```bash
+# Run a Python script with sudo (required for BPF operations)
+limactl shell tinybpf -- sudo python3 /path/to/script.py
+```

@@ -346,9 +346,13 @@ class TestBpfRingBufferAsyncTyped:
         assert len(events) >= 1, "No events captured"
         assert isinstance(events[0], Event)
 
-    async def test_ringbuf_add_with_btf_name(self, ringbuf_bpf_path: Path) -> None:
-        """add() accepts btf_name parameter."""
+    async def test_ringbuf_add_validate_btf_struct_raises_when_not_found(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """add() raises error when validate_btf_struct specifies non-existent struct."""
         import ctypes
+
+        import pytest
 
         class MyEvent(ctypes.Structure):
             _fields_ = [
@@ -357,29 +361,20 @@ class TestBpfRingBufferAsyncTyped:
                 ("comm", ctypes.c_char * 16),
             ]
 
-        events: list[MyEvent] = []
-
         def callback(event: MyEvent) -> int:
-            events.append(event)
             return 0
 
         with tinybpf.load(ringbuf_bpf_path) as obj:
-            with obj.program("trace_execve").attach():
-                rb = tinybpf.BpfRingBuffer()
-                # Use btf_name to specify different BTF struct name
+            rb = tinybpf.BpfRingBuffer()
+            # validate_btf_struct is strict - error if struct not in BTF
+            with pytest.raises(tinybpf.BpfError, match="not found"):
                 rb.add(
                     obj.maps["events"],
                     callback,
                     event_type=MyEvent,
-                    btf_name="event",
+                    validate_btf_struct="nonexistent_struct",
                 )
-
-                subprocess.run(["/bin/true"], check=True)
-                await rb.poll_async(timeout_ms=100)
-                rb.close()
-
-        assert len(events) >= 1, "No events captured"
-        assert isinstance(events[0], MyEvent)
+            rb.close()
 
     async def test_ringbuf_multi_map_tagged_typed(self, ringbuf_bpf_path: Path) -> None:
         """Multi-map tagged events with same event_type."""

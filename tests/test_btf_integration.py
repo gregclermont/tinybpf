@@ -355,8 +355,8 @@ class TestRingBufferBtfValidation:
             )
             rb.close()
 
-    def test_ringbuf_btf_name_parameter(self, ringbuf_bpf_path: Path) -> None:
-        """Ring buffer accepts btf_name parameter for explicit struct lookup."""
+    def test_ringbuf_validate_btf_struct_parameter(self, ringbuf_bpf_path: Path) -> None:
+        """Ring buffer validates type against BTF struct when validate_btf_struct is specified."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
 
             class Event(ctypes.Structure):
@@ -366,16 +366,104 @@ class TestRingBufferBtfValidation:
                     ("comm", ctypes.c_char * 16),
                 ]
 
-            # btf_name can be used to explicitly specify BTF struct name
+            # Should succeed - struct exists in BTF and matches
             rb = tinybpf.BpfRingBuffer(
                 obj.maps["events"],
                 event_type=Event,
-                btf_name="event",
+                validate_btf_struct="event",
             )
             rb.close()
 
-    def test_ringbuf_accepts_mismatched_type_gracefully(self, ringbuf_bpf_path: Path) -> None:
-        """Ring buffer accepts mismatched type when struct not in BTF."""
+    def test_ringbuf_validate_btf_struct_not_found(self, ringbuf_bpf_path: Path) -> None:
+        """Ring buffer raises error when validate_btf_struct specifies non-existent struct."""
+        import pytest
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+
+            class Event(ctypes.Structure):
+                _fields_ = [
+                    ("pid", ctypes.c_uint32),
+                    ("tid", ctypes.c_uint32),
+                    ("comm", ctypes.c_char * 16),
+                ]
+
+            # validate_btf_struct is strict - error if struct not in BTF
+            with pytest.raises(tinybpf.BpfError, match="not found"):
+                tinybpf.BpfRingBuffer(
+                    obj.maps["events"],
+                    event_type=Event,
+                    validate_btf_struct="nonexistent_struct",
+                )
+
+    def test_ringbuf_rejects_size_mismatch_with_validation(self, ringbuf_bpf_path: Path) -> None:
+        """Ring buffer raises error on size mismatch when validate_btf_struct is used."""
+        import pytest
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            # Define event with wrong size
+            class Event(ctypes.Structure):
+                _fields_ = [
+                    ("pid", ctypes.c_uint32),
+                    # Missing tid and comm - wrong size
+                ]
+
+            # Should raise - size mismatch with BTF struct
+            with pytest.raises(tinybpf.BtfValidationError, match="Size mismatch"):
+                tinybpf.BpfRingBuffer(
+                    obj.maps["events"],
+                    event_type=Event,
+                    validate_btf_struct="event",
+                )
+
+    def test_ringbuf_rejects_field_name_mismatch_with_validation(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """Ring buffer raises error on field name mismatch when validation is enabled."""
+        import pytest
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            # Define event with wrong field names
+            class Event(ctypes.Structure):
+                _fields_ = [
+                    ("process_id", ctypes.c_uint32),  # wrong name (should be 'pid')
+                    ("thread_id", ctypes.c_uint32),  # wrong name (should be 'tid')
+                    ("command", ctypes.c_char * 16),  # wrong name (should be 'comm')
+                ]
+
+            # Should raise - field name mismatch with BTF struct
+            with pytest.raises(tinybpf.BtfValidationError, match="Field name mismatch"):
+                tinybpf.BpfRingBuffer(
+                    obj.maps["events"],
+                    event_type=Event,
+                    validate_btf_struct="event",
+                )
+
+    def test_ringbuf_accepts_field_name_mismatch_when_disabled(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """Ring buffer accepts field name mismatch when validate_field_names=False."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            # Define event with wrong field names but correct size
+            class Event(ctypes.Structure):
+                _fields_ = [
+                    ("process_id", ctypes.c_uint32),  # wrong name
+                    ("thread_id", ctypes.c_uint32),  # wrong name
+                    ("command", ctypes.c_char * 16),  # wrong name
+                ]
+
+            # Should succeed - field name validation disabled
+            rb = tinybpf.BpfRingBuffer(
+                obj.maps["events"],
+                event_type=Event,
+                validate_btf_struct="event",
+                validate_field_names=False,
+            )
+            rb.close()
+
+    def test_ringbuf_accepts_mismatched_type_without_explicit_validation(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """Ring buffer accepts mismatched type when validate_btf_struct is not specified."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             # Define event with wrong size
             class event(ctypes.Structure):
@@ -384,8 +472,7 @@ class TestRingBufferBtfValidation:
                     # Missing tid and comm - wrong size
                 ]
 
-            # Should NOT raise - validation is skipped when struct not in BTF
-            # (The test BPF program's BTF doesn't include struct names)
+            # Should NOT raise - validation only happens when validate_btf_struct is specified
             rb = tinybpf.BpfRingBuffer(
                 obj.maps["events"],
                 event_type=event,
@@ -424,8 +511,8 @@ class TestPerfBufferBtfValidation:
             )
             pb.close()
 
-    def test_perfbuf_accepts_btf_name_parameter(self, perf_bpf_path: Path) -> None:
-        """Perf buffer accepts btf_name parameter."""
+    def test_perfbuf_validate_btf_struct_parameter(self, perf_bpf_path: Path) -> None:
+        """Perf buffer validates type against BTF struct when validate_btf_struct is specified."""
         with tinybpf.load(perf_bpf_path) as obj:
 
             class Event(ctypes.Structure):
@@ -438,25 +525,75 @@ class TestPerfBufferBtfValidation:
             def handle_event(cpu: int, data: Event) -> None:
                 pass
 
-            # btf_name can be used for explicit struct lookup
+            # Should succeed - struct exists in BTF and matches
             pb = tinybpf.BpfPerfBuffer(
                 obj.maps["events"],
                 handle_event,
                 event_type=Event,
-                btf_name="event",
+                validate_btf_struct="event",
             )
             pb.close()
+
+    def test_perfbuf_validate_btf_struct_not_found(self, perf_bpf_path: Path) -> None:
+        """Perf buffer raises error when validate_btf_struct specifies non-existent struct."""
+        import pytest
+
+        with tinybpf.load(perf_bpf_path) as obj:
+
+            class Event(ctypes.Structure):
+                _fields_ = [
+                    ("pid", ctypes.c_uint32),
+                    ("cpu", ctypes.c_uint32),
+                    ("comm", ctypes.c_char * 16),
+                ]
+
+            def handle_event(cpu: int, data: Event) -> None:
+                pass
+
+            # validate_btf_struct is strict - error if struct not in BTF
+            with pytest.raises(tinybpf.BpfError, match="not found"):
+                tinybpf.BpfPerfBuffer(
+                    obj.maps["events"],
+                    handle_event,
+                    event_type=Event,
+                    validate_btf_struct="nonexistent_struct",
+                )
+
+    def test_perfbuf_rejects_size_mismatch_with_validation(self, perf_bpf_path: Path) -> None:
+        """Perf buffer raises error on size mismatch when validate_btf_struct is used."""
+        import pytest
+
+        with tinybpf.load(perf_bpf_path) as obj:
+
+            class Event(ctypes.Structure):
+                _fields_ = [
+                    ("pid", ctypes.c_uint32),
+                    # Missing cpu and comm - wrong size
+                ]
+
+            def handle_event(cpu: int, data: Event) -> None:
+                pass
+
+            # Should raise - size mismatch with BTF struct
+            with pytest.raises(tinybpf.BtfValidationError, match="Size mismatch"):
+                tinybpf.BpfPerfBuffer(
+                    obj.maps["events"],
+                    handle_event,
+                    event_type=Event,
+                    validate_btf_struct="event",
+                )
 
 
 class TestRegisterType:
     """Tests for BpfObject.register_type().
 
-    Note: register_type() is best-effort - if the struct is not found in BTF,
-    the type is registered without validation.
+    Note: register_type() is strict - the BTF struct must exist and the
+    type is validated against it. This enforces a 1:1 mapping between
+    BTF struct names and Python types.
     """
 
     def test_register_type_registers_type(self, ringbuf_bpf_path: Path) -> None:
-        """register_type() registers Python type."""
+        """register_type() registers Python type after validation."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
 
             class event(ctypes.Structure):
@@ -466,28 +603,96 @@ class TestRegisterType:
                     ("comm", ctypes.c_char * 16),
                 ]
 
-            # Should succeed - registers without error
+            # Should succeed - struct exists in BTF and matches
             obj.register_type("event", event)
             # Verify it's registered
             assert "event" in obj._type_registry
+            assert obj.lookup_btf_name(event) == "event"
+
+    def test_register_type_rejects_size_mismatch(self, ringbuf_bpf_path: Path) -> None:
+        """register_type() raises error on size mismatch."""
+        import pytest
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+
+            class event(ctypes.Structure):
+                _fields_ = [
+                    ("pid", ctypes.c_uint32),
+                    # Missing tid and comm - wrong size
+                ]
+
+            # Should raise - size mismatch
+            with pytest.raises(tinybpf.BtfValidationError, match="Size mismatch"):
+                obj.register_type("event", event)
+
+    def test_register_type_rejects_field_name_mismatch(self, ringbuf_bpf_path: Path) -> None:
+        """register_type() raises error on field name mismatch."""
+        import pytest
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+
+            class event(ctypes.Structure):
+                _fields_ = [
+                    ("process_id", ctypes.c_uint32),  # wrong name
+                    ("thread_id", ctypes.c_uint32),  # wrong name
+                    ("command", ctypes.c_char * 16),  # wrong name
+                ]
+
+            # Should raise - field name mismatch
+            with pytest.raises(tinybpf.BtfValidationError, match="Field name mismatch"):
+                obj.register_type("event", event)
+
+    def test_register_type_accepts_field_name_mismatch_when_disabled(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """register_type() accepts field name mismatch when validate_field_names=False."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+
+            class event(ctypes.Structure):
+                _fields_ = [
+                    ("process_id", ctypes.c_uint32),  # wrong name
+                    ("thread_id", ctypes.c_uint32),  # wrong name
+                    ("command", ctypes.c_char * 16),  # wrong name
+                ]
+
+            # Should succeed - field name validation disabled
+            obj.register_type("event", event, validate_field_names=False)
+            assert "event" in obj._type_registry
+
+    def test_register_type_rejects_nonexistent_struct(self, ringbuf_bpf_path: Path) -> None:
+        """register_type() raises error when struct not in BTF."""
+        import pytest
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+
+            class MyStruct(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_uint32)]
+
+            # Should raise - struct not in BTF
+            with pytest.raises(tinybpf.BpfError, match="not found"):
+                obj.register_type("nonexistent_struct", MyStruct)
 
 
 class TestGetBtfStructNames:
     """Tests for _get_btf_struct_names helper."""
 
     def test_get_struct_names_returns_list(self, ringbuf_bpf_path: Path) -> None:
-        """_get_btf_struct_names returns a list."""
+        """_get_btf_struct_names returns a list containing struct names."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             # BTF must be present in our test files
             assert obj.btf is not None, "BTF required for this test"
             names = obj._get_btf_struct_names()
             assert isinstance(names, list)
-            # Note: The list may be empty if BTF doesn't include
-            # named struct definitions (common with some compile configs)
+            # The 'event' struct should be in BTF now (via _event_btf_anchor)
+            assert "event" in names, f"Expected 'event' in BTF struct names, got: {names}"
 
 
 class TestGracefulDegradation:
-    """Tests for graceful degradation when BTF is unavailable or incomplete."""
+    """Tests for graceful degradation when BTF validation is not explicitly requested.
+
+    Note: Without validate_btf_struct parameter, validation is NOT performed.
+    This allows for gradual adoption of BTF validation.
+    """
 
     def test_typed_works_without_btf(self, test_maps_bpf_path: Path) -> None:
         """typed() works even if BTF properties return None."""
@@ -498,8 +703,10 @@ class TestGracefulDegradation:
             counters[0] = 100
             assert counters[0] == 100
 
-    def test_ringbuf_skips_validation_when_struct_not_in_btf(self, ringbuf_bpf_path: Path) -> None:
-        """Ring buffer skips BTF validation gracefully when struct not in BTF."""
+    def test_ringbuf_skips_validation_without_validate_btf_struct(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """Ring buffer skips BTF validation when validate_btf_struct is not specified."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
 
             class event(ctypes.Structure):
@@ -509,21 +716,23 @@ class TestGracefulDegradation:
                     ("comm", ctypes.c_char * 16),
                 ]
 
-            # Should work - validation is skipped if struct not in BTF
+            # Should work - no validate_btf_struct means no validation
             rb = tinybpf.BpfRingBuffer(
                 obj.maps["events"],
                 event_type=event,
             )
             rb.close()
 
-    def test_ringbuf_accepts_any_type_when_struct_not_in_btf(self, ringbuf_bpf_path: Path) -> None:
-        """Ring buffer accepts any event type when struct not in BTF."""
+    def test_ringbuf_accepts_any_type_without_validate_btf_struct(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """Ring buffer accepts any event type when validate_btf_struct is not specified."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
-            # This type has wrong size/fields, but validation is skipped
+            # This type has wrong size/fields, but validation is not requested
             class WrongEvent(ctypes.Structure):
                 _fields_ = [("x", ctypes.c_uint64)]
 
-            # Should work - no validation error
+            # Should work - no validate_btf_struct means no validation
             rb = tinybpf.BpfRingBuffer(
                 obj.maps["events"],
                 event_type=WrongEvent,
@@ -687,11 +896,11 @@ class TestBtfValidationErrors:
             assert typed_map[0] == 42
 
 
-class TestValidateNamesParameter:
-    """Tests for validate_names parameter in typed()."""
+class TestValidateFieldNamesParameter:
+    """Tests for validate_field_names parameter in typed()."""
 
-    def test_validate_names_default_true(self, test_maps_bpf_path: Path) -> None:
-        """validate_names defaults to True."""
+    def test_validate_field_names_default_true(self, test_maps_bpf_path: Path) -> None:
+        """validate_field_names defaults to True."""
         with tinybpf.load(test_maps_bpf_path) as obj:
             counters = obj.maps["counters"]
 
@@ -699,11 +908,11 @@ class TestValidateNamesParameter:
                 _fields_ = [("count", ctypes.c_uint64)]
 
             # Should succeed with correct size (name validation is best-effort)
-            typed_map = counters.typed(value=Value, validate_names=True)
+            typed_map = counters.typed(value=Value, validate_field_names=True)
             assert typed_map is not None
 
-    def test_validate_names_false(self, test_maps_bpf_path: Path) -> None:
-        """validate_names=False only validates sizes."""
+    def test_validate_field_names_false(self, test_maps_bpf_path: Path) -> None:
+        """validate_field_names=False only validates sizes."""
         with tinybpf.load(test_maps_bpf_path) as obj:
             counters = obj.maps["counters"]
 
@@ -711,7 +920,7 @@ class TestValidateNamesParameter:
                 _fields_ = [("different_name", ctypes.c_uint64)]
 
             # Should succeed - size matches even if field name differs
-            typed_map = counters.typed(value=Value, validate_names=False)
+            typed_map = counters.typed(value=Value, validate_field_names=False)
             assert typed_map is not None
             typed_map[0] = Value(different_name=123)
             result = typed_map[0]

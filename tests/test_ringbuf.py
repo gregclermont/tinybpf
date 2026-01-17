@@ -562,8 +562,10 @@ class TestBpfRingBufferTyped:
                 rb.add(obj.maps["events2"], event_type=Event2)
             rb.close()
 
-    def test_ringbuf_add_btf_name_parameter(self, ringbuf_bpf_path: Path) -> None:
-        """add() accepts btf_name parameter for BTF struct lookup."""
+    def test_ringbuf_add_validate_btf_struct_raises_when_not_found(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """add() raises error when validate_btf_struct specifies non-existent struct."""
         import ctypes
 
         class MyEvent(ctypes.Structure):
@@ -573,23 +575,20 @@ class TestBpfRingBufferTyped:
                 ("comm", ctypes.c_char * 16),
             ]
 
-        events: list[MyEvent] = []
-
         def callback(event: MyEvent) -> int:
-            events.append(event)
             return 0
 
         with tinybpf.load(ringbuf_bpf_path) as obj:
-            with obj.program("trace_execve").attach():
-                rb = tinybpf.BpfRingBuffer()
-                # btf_name specifies BTF struct name when class name differs
-                rb.add(obj.maps["events"], callback, event_type=MyEvent, btf_name="event")
-                subprocess.run(["/bin/true"], check=True)
-                rb.poll(timeout_ms=100)
-                rb.close()
-
-        assert len(events) >= 1
-        assert isinstance(events[0], MyEvent)
+            rb = tinybpf.BpfRingBuffer()
+            # validate_btf_struct is strict - error if struct not in BTF
+            with pytest.raises(tinybpf.BpfError, match="not found"):
+                rb.add(
+                    obj.maps["events"],
+                    callback,
+                    event_type=MyEvent,
+                    validate_btf_struct="nonexistent_struct",
+                )
+            rb.close()
 
     def test_ringbuf_constructor_event_type_inherited_by_add(self, ringbuf_bpf_path: Path) -> None:
         """event_type from constructor is inherited by add() if not specified."""
