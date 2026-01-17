@@ -13,7 +13,7 @@ See `DEVELOPMENT.md` for full setup, commands, and CI/CD workflow documentation.
 **Quick reference:**
 ```bash
 make test      # Run tests (auto-detects OS)
-make compile   # Compile eBPF test programs
+make compile   # Compile eBPF test programs (auto-detects OS)
 make check     # Run all code quality checks
 ```
 
@@ -61,14 +61,11 @@ src/tinybpf/
 
 ### Compiling BPF Programs (macOS or Linux)
 
-Use the Docker image to compile BPF programs:
 ```bash
-# Compile a single file
-docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile tests/bpf/myprogram.bpf.c
-
-# Compile all test BPF programs
-make compile
+make compile  # Auto-detects OS, uses Docker in Lima on macOS
 ```
+
+See `DEVELOPMENT.md` for advanced options (custom output paths, extra compiler flags).
 
 ### Inspecting BTF Information
 

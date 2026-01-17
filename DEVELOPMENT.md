@@ -63,16 +63,18 @@ Commands auto-detect OS and do the right thing:
 |--------|-------------|
 | `make test` | Run tests (Linux: direct, macOS: via Lima) |
 | `make setup` | Download libbpf (Linux: direct, macOS: via Lima) |
-| `make compile` | Compile eBPF programs (Docker, works anywhere) |
+| `make compile` | Compile eBPF programs (Linux: local Docker, macOS: Docker in Lima) |
 | `make clean` | Remove compiled objects |
 
 macOS-only:
 
 | Target | Description |
 |--------|-------------|
-| `make lima-create` | Create and configure Lima VM (one-time) |
+| `make lima-create` | Create Lima VM with Docker, make, and uv (one-time) |
 | `make lima-shell` | Drop into Lima VM shell at project directory |
 | `make lima-delete` | Remove Lima VM |
+
+The Lima VM is a full development environment. You can work from macOS (calling into the VM) or shell into it and run everything directly, including Claude Code.
 
 ### Running Individual Tests
 
@@ -144,16 +146,11 @@ tinybpf provides a Docker image for compiling eBPF programs. It bundles libbpf h
 **Local development:**
 
 ```bash
-# Compile a single file
-docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile program.bpf.c
+# Recommended: use make (auto-detects OS)
+make compile
 
-# Compile multiple files
-docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c
-
-# Output to specific directory
+# Advanced: run docker directly (on Linux, or inside Lima shell on macOS)
 docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile -o build/ src/*.bpf.c
-
-# With extra compiler flags
 docker run --rm -v $(pwd):/src -e EXTRA_CFLAGS="-DDEBUG" ghcr.io/gregclermont/tinybpf-compile program.bpf.c
 ```
 
