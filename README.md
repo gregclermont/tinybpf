@@ -312,8 +312,18 @@ pb = BpfPerfBuffer(obj.maps["events"], handle, event_type=Event)
 
 - `tinybpf.version()` - Package version
 - `tinybpf.libbpf_version()` - Bundled libbpf version
-- `BpfError` - Exception type with `errno` attribute
+- `BpfError` - Exception type with `errno` and `libbpf_log` attributes
 - `BtfValidationError` - Exception for BTF type mismatches
+
+When loading fails (e.g., CO-RE relocation errors), `BpfError.libbpf_log` contains diagnostic output from libbpf:
+
+```python
+try:
+    obj = tinybpf.load("program.bpf.o")
+except tinybpf.BpfError as e:
+    if e.libbpf_log:
+        print(e.libbpf_log)  # Shows CO-RE errors, verifier output, etc.
+```
 
 ## Requirements
 
@@ -322,6 +332,8 @@ pb = BpfPerfBuffer(obj.maps["events"], handle, event_type=Event)
 - Root or `CAP_BPF` capability
 
 ## Building on tinybpf
+
+For detailed guidance on CO-RE compatibility, event struct design, and debugging, see [GUIDE.md](GUIDE.md).
 
 ### Compiling eBPF programs
 

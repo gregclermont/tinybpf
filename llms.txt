@@ -120,7 +120,8 @@ tinybpf.libbpf_version()  # bundled libbpf version
 BpfObject, BpfProgram, BpfMap, BpfLink, BpfRingBuffer, BpfPerfBuffer
 BpfMapType, BpfProgType, BtfKind  # IntEnums
 MapInfo, ProgramInfo, RingBufferEvent, BtfType, BtfField  # dataclasses
-BpfError, BtfValidationError  # exceptions (.errno attribute)
+BpfError  # exception with .errno, .libbpf_log (CO-RE/verifier diagnostics)
+BtfValidationError  # exception with .errno
 BPF_ANY, BPF_NOEXIST, BPF_EXIST  # map update flags
 
 # BTF type introspection
@@ -150,6 +151,7 @@ with tinybpf.load("trace.bpf.o") as obj:
 
 - `BpfError: open failed: No such file or directory` - .bpf.o file not found
 - `BpfError: load failed: Operation not permitted` - need root or CAP_BPF
+- `BpfError: load failed: ...` with libbpf_log mentioning "CO-RE relocation" - struct field doesn't exist on target kernel; check e.libbpf_log for details
 - `BpfError: attach kprobe failed: No such file or directory` - kernel function doesn't exist
 - `BtfValidationError: Size mismatch` - Python struct size doesn't match BTF
 - `KeyError` - program/map name not in object, or map key not found
@@ -158,3 +160,4 @@ with tinybpf.load("trace.bpf.o") as obj:
 
 - GitHub: https://github.com/gregclermont/tinybpf
 - Package index: https://gregclermont.github.io/tinybpf
+- BPF development guide: https://github.com/gregclermont/tinybpf/blob/main/GUIDE.md (CO-RE, struct layouts, debugging)

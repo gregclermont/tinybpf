@@ -6,6 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 tinybpf is a minimal Python library for loading and interacting with pre-compiled CO-RE (Compile Once, Run Everywhere) eBPF programs. It uses ctypes bindings to a bundled libbpf shared library, with no runtime dependencies except libelf (typically pre-installed on Linux systems).
 
+## Documentation Structure
+
+The repository has four documentation targets with distinct purposes:
+
+| Document | Audience | Content |
+|----------|----------|---------|
+| `README.md` | Library users | API reference, installation, quick start |
+| `GUIDE.md` | BPF developers | Concepts, patterns, debugging - how to write BPF programs that work with tinybpf |
+| `DEVELOPMENT.md` | Contributors | Dev setup, testing, CI/CD workflows - how to contribute to tinybpf itself |
+| `examples/` | BPF developers | Runnable example programs demonstrating patterns from GUIDE.md |
+| `llms.txt` | AI assistants | Concise API reference, points to GUIDE.md for BPF patterns |
+
+**Key principles:**
+- README.md stays concise - API reference, not tutorials
+- GUIDE.md is the learning path for BPF development patterns (CO-RE, struct layouts, debugging)
+- GUIDE.md references examples/; example READMEs reference back to GUIDE.md
+- DEVELOPMENT.md is strictly for contributors, not users
+- examples/ contains complete, runnable programs with brief READMEs (what it shows, how to run)
+
 ## Development
 
 See `DEVELOPMENT.md` for full setup, commands, and CI/CD workflow documentation.
@@ -19,19 +38,27 @@ make check     # Run all code quality checks
 
 ## Architecture
 
-### Source Layout
+### Repository Layout
 ```
-src/tinybpf/
-├── __init__.py          # Public API exports
-├── _types.py            # Exception, enums, dataclasses, error helpers
-├── _link.py             # BpfLink class
-├── _map.py              # BpfMap, MapCollection
-├── _program.py          # BpfProgram, ProgramCollection
-├── _buffers.py          # BpfRingBuffer, BpfPerfBuffer
-├── _object.py           # BpfObject, load()
-└── _libbpf/
-    ├── __init__.py
-    └── bindings.py      # Low-level ctypes bindings to libbpf C functions
+├── README.md            # API reference for library users
+├── GUIDE.md             # BPF development patterns and concepts
+├── DEVELOPMENT.md       # Contributor guide (setup, CI/CD)
+├── llms.txt             # Concise API reference for AI assistants
+├── examples/            # Runnable example programs
+│   ├── README.md        # Index of examples
+│   └── <example>/       # Each example: .bpf.c, .py, README.md
+├── src/tinybpf/         # Library source
+│   ├── __init__.py      # Public API exports
+│   ├── _types.py        # Exception, enums, dataclasses, error helpers
+│   ├── _link.py         # BpfLink class
+│   ├── _map.py          # BpfMap, MapCollection
+│   ├── _program.py      # BpfProgram, ProgramCollection
+│   ├── _buffers.py      # BpfRingBuffer, BpfPerfBuffer
+│   ├── _object.py       # BpfObject, load()
+│   └── _libbpf/
+│       ├── __init__.py
+│       └── bindings.py  # Low-level ctypes bindings to libbpf C functions
+└── tests/               # Test suite
 ```
 
 ### Key Design Patterns

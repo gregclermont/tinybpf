@@ -173,6 +173,8 @@ docker run --rm -v $(pwd):/src -e EXTRA_CFLAGS="-DDEBUG" ghcr.io/gregclermont/ti
 
 **Supported architectures:** linux/amd64, linux/arm64 (auto-detected)
 
+For CO-RE compatibility, portable BPF patterns, and event struct design, see [GUIDE.md](GUIDE.md).
+
 ## CI/CD Workflows
 
 ### Overview
