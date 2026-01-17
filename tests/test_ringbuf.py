@@ -561,3 +561,116 @@ class TestBpfRingBufferTyped:
             with pytest.raises(tinybpf.BpfError, match="Cannot mix event types"):
                 rb.add(obj.maps["events2"], event_type=Event2)
             rb.close()
+
+    def test_ringbuf_add_btf_name_parameter(self, ringbuf_bpf_path: Path) -> None:
+        """add() accepts btf_name parameter for BTF struct lookup."""
+        import ctypes
+
+        class MyEvent(ctypes.Structure):
+            _fields_ = [
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events: list[MyEvent] = []
+
+        def callback(event: MyEvent) -> int:
+            events.append(event)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer()
+                # btf_name specifies BTF struct name when class name differs
+                rb.add(obj.maps["events"], callback, event_type=MyEvent, btf_name="event")
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+                rb.close()
+
+        assert len(events) >= 1
+        assert isinstance(events[0], MyEvent)
+
+    def test_ringbuf_constructor_event_type_inherited_by_add(self, ringbuf_bpf_path: Path) -> None:
+        """event_type from constructor is inherited by add() if not specified."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                # Set event_type in constructor
+                rb = tinybpf.BpfRingBuffer(event_type=Event)
+                # add() without event_type should inherit from constructor
+                rb.add(obj.maps["events"])
+
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+
+                # Iteration should return Event instances
+                events = list(rb)
+                assert len(events) >= 1
+                assert isinstance(events[0], Event)
+                rb.close()
+
+    def test_ringbuf_add_event_type_overrides_constructor(self, ringbuf_bpf_path: Path) -> None:
+        """event_type in add() overrides constructor default."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        events: list[Event] = []
+
+        def callback(event: Event) -> int:
+            events.append(event)
+            return 0
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                # Constructor defaults to bytes
+                rb = tinybpf.BpfRingBuffer()
+                # add() overrides with Event type
+                rb.add(obj.maps["events"], callback, event_type=Event)
+
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+                rb.close()
+
+        assert len(events) >= 1
+        assert isinstance(events[0], Event)
+
+    def test_ringbuf_sync_iteration_typed(self, ringbuf_bpf_path: Path) -> None:
+        """Sync iteration (__iter__) returns typed events."""
+        import ctypes
+
+        class Event(ctypes.Structure):
+            _fields_ = [
+                ("pid", ctypes.c_uint32),
+                ("tid", ctypes.c_uint32),
+                ("comm", ctypes.c_char * 16),
+            ]
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.maps["events"], event_type=Event)
+
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+
+                # Use sync iteration (for loop) - list() drains queued events
+                events = list(rb)
+
+                assert len(events) >= 1
+                assert isinstance(events[0], Event)
+                assert events[0].pid > 0
+                rb.close()
