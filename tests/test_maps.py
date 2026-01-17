@@ -26,32 +26,32 @@ class TestBpfMaps:
     def test_map_info(self, test_maps_bpf_path: Path) -> None:
         """MapInfo dataclass contains correct data."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts")
+            hash_map = obj.maps["pid_counts"]
             assert hash_map.type == tinybpf.BpfMapType.HASH
             assert hash_map.key_size == 4  # __u32
             assert hash_map.value_size == 8  # __u64
             assert hash_map.max_entries == 1024
 
-            array_map = obj.map("counters")
+            array_map = obj.maps["counters"]
             assert array_map.type == tinybpf.BpfMapType.ARRAY
             assert array_map.max_entries == 16
 
     def test_map_update_and_lookup(self, test_maps_bpf_path: Path) -> None:
         """Can update and lookup map elements."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts")
+            hash_map = obj.maps["pid_counts"]
 
-            # Use integer keys/values (converted to bytes)
+            # Use integer keys/values (converted to bytes for write)
             key = 12345
             value = 42
 
             # Update
             hash_map.update(key.to_bytes(4, "little"), value.to_bytes(8, "little"))
 
-            # Lookup
+            # Lookup - auto-infers int from BTF
             result = hash_map.lookup(key.to_bytes(4, "little"))
             assert result is not None
-            assert int.from_bytes(result, "little") == 42
+            assert result == 42  # Auto-inferred as int from BTF
 
             # Delete
             assert hash_map.delete(key.to_bytes(4, "little"))
@@ -60,15 +60,14 @@ class TestBpfMaps:
     def test_map_dict_interface(self, test_maps_bpf_path: Path) -> None:
         """Map supports dict-like interface."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts")
+            hash_map = obj.maps["pid_counts"]
             key = (99999).to_bytes(4, "little")
-            value = (100).to_bytes(8, "little")
 
             # __setitem__
-            hash_map[key] = value
+            hash_map[key] = (100).to_bytes(8, "little")
 
-            # __getitem__
-            assert hash_map[key] == value
+            # __getitem__ - auto-infers int from BTF
+            assert hash_map[key] == 100
 
             # __contains__
             assert key in hash_map
@@ -84,7 +83,7 @@ class TestBpfMaps:
     def test_map_iteration(self, test_maps_bpf_path: Path) -> None:
         """Can iterate over map entries."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts")
+            hash_map = obj.maps["pid_counts"]
 
             # Insert some entries
             for i in range(5):
@@ -112,14 +111,14 @@ class TestBpfMaps:
     def test_array_map_operations(self, test_maps_bpf_path: Path) -> None:
         """Array maps work correctly."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            array_map = obj.map("counters")
+            array_map = obj.maps["counters"]
 
             # Arrays have fixed indices
             idx = (0).to_bytes(4, "little")
-            value = (12345).to_bytes(8, "little")
 
-            array_map[idx] = value
-            assert array_map[idx] == value
+            array_map[idx] = (12345).to_bytes(8, "little")
+            # Auto-infers int from BTF
+            assert array_map[idx] == 12345
 
             # Array maps always have all keys (can't delete)
             # But we can set to zero
@@ -132,7 +131,7 @@ class TestTypedMapAccess:
     def test_typed_int_keys_and_values(self, test_maps_bpf_path: Path) -> None:
         """Map with int types auto-converts keys and values."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts", key_type=int, value_type=int)
+            hash_map = obj.maps["pid_counts"].typed(key=int, value=int)
 
             # Update with int (no manual conversion needed)
             hash_map[12345] = 42
@@ -148,7 +147,7 @@ class TestTypedMapAccess:
     def test_typed_iteration(self, test_maps_bpf_path: Path) -> None:
         """Typed map iteration returns typed keys and values."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts", key_type=int, value_type=int)
+            hash_map = obj.maps["pid_counts"].typed(key=int, value=int)
 
             # Insert some entries
             for i in range(3):
@@ -174,42 +173,43 @@ class TestTypedMapAccess:
     def test_typed_lookup_returns_none_for_missing(self, test_maps_bpf_path: Path) -> None:
         """Typed lookup returns None for missing keys."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts", key_type=int, value_type=int)
+            hash_map = obj.maps["pid_counts"].typed(key=int, value=int)
             result = hash_map.lookup(99999999)
             assert result is None
 
-    def test_untyped_map_returns_bytes(self, test_maps_bpf_path: Path) -> None:
-        """Untyped map still returns bytes (backward compatible)."""
+    def test_untyped_map_auto_infers_from_btf(self, test_maps_bpf_path: Path) -> None:
+        """Untyped map auto-infers type from BTF metadata."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts")  # No types
+            hash_map = obj.maps["pid_counts"]  # No explicit types
             key = (12345).to_bytes(4, "little")
-            value = (42).to_bytes(8, "little")
 
-            hash_map[key] = value
+            hash_map[key] = (42).to_bytes(8, "little")
             result = hash_map[key]
 
-            assert result == value
-            assert isinstance(result, bytes)
+            # BTF indicates INT type, so auto-converts to int
+            assert result == 42
+            assert isinstance(result, int)
 
             del hash_map[key]
 
     def test_partial_typing_key_only(self, test_maps_bpf_path: Path) -> None:
-        """Can specify only key_type."""
+        """Can specify only key_type, value still auto-infers from BTF."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts", key_type=int)
+            hash_map = obj.maps["pid_counts"].typed(key=int)
 
             hash_map[12345] = (42).to_bytes(8, "little")
             result = hash_map[12345]
 
-            # Value is still bytes
-            assert isinstance(result, bytes)
+            # Value auto-infers from BTF (INT -> int)
+            assert result == 42
+            assert isinstance(result, int)
 
             del hash_map[12345]
 
     def test_partial_typing_value_only(self, test_maps_bpf_path: Path) -> None:
         """Can specify only value_type."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts", value_type=int)
+            hash_map = obj.maps["pid_counts"].typed(value=int)
 
             key = (12345).to_bytes(4, "little")
             hash_map[key] = 42
@@ -228,7 +228,7 @@ class TestBpfMapErrors:
     def test_empty_map_iteration(self, test_maps_bpf_path: Path) -> None:
         """Iterating an empty map should yield nothing."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts")
+            hash_map = obj.maps["pid_counts"]
             # Ensure map is empty (delete any existing keys)
             for key in list(hash_map.keys()):
                 hash_map.delete(key)
@@ -240,7 +240,7 @@ class TestBpfMapErrors:
     def test_map_update_exceeds_max_entries(self, test_maps_bpf_path: Path) -> None:
         """Exceeding map max_entries should raise BpfError."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts")
+            hash_map = obj.maps["pid_counts"]
             max_entries = hash_map.max_entries
 
             # Fill the map to capacity
@@ -264,7 +264,7 @@ class TestBpfMapErrors:
     def test_map_use_after_close(self, test_maps_bpf_path: Path) -> None:
         """Using map after BpfObject.close() should raise BpfError."""
         obj = tinybpf.load(test_maps_bpf_path)
-        hash_map = obj.map("pid_counts")
+        hash_map = obj.maps["pid_counts"]
         obj.close()
 
         with pytest.raises(tinybpf.BpfError, match="closed"):
@@ -273,7 +273,7 @@ class TestBpfMapErrors:
     def test_map_iteration_after_close(self, test_maps_bpf_path: Path) -> None:
         """Iterating map after BpfObject.close() should raise BpfError."""
         obj = tinybpf.load(test_maps_bpf_path)
-        hash_map = obj.map("pid_counts")
+        hash_map = obj.maps["pid_counts"]
         obj.close()
 
         with pytest.raises(tinybpf.BpfError, match="closed"):
@@ -296,14 +296,14 @@ class TestPinnedMaps:
     def test_pin_map(self, test_maps_bpf_path: Path, pin_path: str) -> None:
         """Can pin a map to bpffs."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts")
+            hash_map = obj.maps["pid_counts"]
             hash_map.pin(pin_path)
             assert Path(pin_path).exists()
 
     def test_unpin_map(self, test_maps_bpf_path: Path, pin_path: str) -> None:
         """Can unpin a previously pinned map."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts")
+            hash_map = obj.maps["pid_counts"]
             hash_map.pin(pin_path)
             assert Path(pin_path).exists()
 
@@ -313,7 +313,7 @@ class TestPinnedMaps:
     def test_open_pinned_map(self, test_maps_bpf_path: Path, pin_path: str) -> None:
         """Can open a pinned map and read its metadata."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            original = obj.map("pid_counts")
+            original = obj.maps["pid_counts"]
             original.pin(pin_path)
 
             # Open the pinned map
@@ -328,7 +328,7 @@ class TestPinnedMaps:
     def test_pinned_map_operations(self, test_maps_bpf_path: Path, pin_path: str) -> None:
         """Can perform CRUD operations on a pinned map."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            original = obj.map("pid_counts")
+            original = obj.maps["pid_counts"]
             original.pin(pin_path)
 
         # Open separately and perform operations
@@ -354,7 +354,7 @@ class TestPinnedMaps:
 
         # Pin and write data
         with tinybpf.load(test_maps_bpf_path) as obj:
-            original = obj.map("pid_counts")
+            original = obj.maps["pid_counts"]
             original[key] = value
             original.pin(pin_path)
 
@@ -367,7 +367,7 @@ class TestPinnedMaps:
     def test_pinned_map_iteration(self, test_maps_bpf_path: Path, pin_path: str) -> None:
         """Can iterate over entries in a pinned map."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            original = obj.map("pid_counts")
+            original = obj.maps["pid_counts"]
             # Add some entries
             for i in range(3):
                 key = (50000 + i).to_bytes(4, "little")
@@ -390,7 +390,7 @@ class TestPinnedMaps:
     def test_pinned_map_use_after_close(self, test_maps_bpf_path: Path, pin_path: str) -> None:
         """Using pinned map after close() should raise BpfError."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            obj.map("pid_counts").pin(pin_path)
+            obj.maps["pid_counts"].pin(pin_path)
 
         pinned = tinybpf.open_pinned_map(pin_path)
         pinned.close()
@@ -401,7 +401,7 @@ class TestPinnedMaps:
     def test_pin_standalone_map_raises(self, test_maps_bpf_path: Path, pin_path: str) -> None:
         """Pinning a standalone map should raise BpfError."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            obj.map("pid_counts").pin(pin_path)
+            obj.maps["pid_counts"].pin(pin_path)
 
         with tinybpf.open_pinned_map(pin_path) as pinned:
             with pytest.raises(tinybpf.BpfError, match="standalone"):

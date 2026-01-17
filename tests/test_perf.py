@@ -24,7 +24,7 @@ class TestBpfPerfBuffer:
             pass
 
         with tinybpf.load(perf_bpf_path) as obj:
-            pb = tinybpf.BpfPerfBuffer(obj.map("events"), callback)
+            pb = tinybpf.BpfPerfBuffer(obj.maps["events"], callback)
             assert "open" in repr(pb)
             pb.close()
             assert "closed" in repr(pb)
@@ -32,7 +32,7 @@ class TestBpfPerfBuffer:
     def test_perfbuf_wrong_map_type(self, test_maps_bpf_path: Path) -> None:
         """Creating perf buffer from non-perf-event-array map raises BpfError."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            hash_map = obj.map("pid_counts")
+            hash_map = obj.maps["pid_counts"]
             with pytest.raises(tinybpf.BpfError, match="PERF_EVENT_ARRAY"):
                 tinybpf.BpfPerfBuffer(hash_map, lambda cpu, data: None)
 
@@ -40,7 +40,7 @@ class TestBpfPerfBuffer:
         """Invalid page_count raises ValueError."""
         with tinybpf.load(perf_bpf_path) as obj:
             with pytest.raises(ValueError, match="power of 2"):
-                tinybpf.BpfPerfBuffer(obj.map("events"), lambda c, d: None, page_count=3)
+                tinybpf.BpfPerfBuffer(obj.maps["events"], lambda c, d: None, page_count=3)
 
     def test_perfbuf_poll_events(self, perf_bpf_path: Path) -> None:
         """Can poll and receive events with CPU info."""
@@ -52,7 +52,7 @@ class TestBpfPerfBuffer:
         with tinybpf.load(perf_bpf_path) as obj:
             prog = obj.program("trace_getpid")
             with prog.attach() as link:
-                with tinybpf.BpfPerfBuffer(obj.map("events"), callback) as pb:
+                with tinybpf.BpfPerfBuffer(obj.maps["events"], callback) as pb:
                     # Trigger getpid to generate event
                     os.getpid()
                     pb.poll(timeout_ms=100)
@@ -82,7 +82,7 @@ class TestBpfPerfBuffer:
 
         with tinybpf.load(perf_bpf_path) as obj:
             # Just test that it can be created with lost callback
-            with tinybpf.BpfPerfBuffer(obj.map("events"), sample_cb, lost_cb) as pb:
+            with tinybpf.BpfPerfBuffer(obj.maps["events"], sample_cb, lost_cb) as pb:
                 assert pb is not None
 
     def test_perfbuf_callback_exception(self, perf_bpf_path: Path) -> None:
@@ -94,7 +94,7 @@ class TestBpfPerfBuffer:
         with tinybpf.load(perf_bpf_path) as obj:
             prog = obj.program("trace_getpid")
             with prog.attach() as link:
-                with tinybpf.BpfPerfBuffer(obj.map("events"), bad_callback) as pb:
+                with tinybpf.BpfPerfBuffer(obj.maps["events"], bad_callback) as pb:
                     os.getpid()
                     with pytest.raises(ValueError, match="test error"):
                         pb.poll(timeout_ms=100)
@@ -102,7 +102,7 @@ class TestBpfPerfBuffer:
     def test_perfbuf_use_after_close(self, perf_bpf_path: Path) -> None:
         """Using perf buffer after close raises BpfError."""
         with tinybpf.load(perf_bpf_path) as obj:
-            pb = tinybpf.BpfPerfBuffer(obj.map("events"), lambda c, d: None)
+            pb = tinybpf.BpfPerfBuffer(obj.maps["events"], lambda c, d: None)
             pb.close()
             with pytest.raises(tinybpf.BpfError, match="closed"):
                 pb.poll()
@@ -110,7 +110,7 @@ class TestBpfPerfBuffer:
     def test_perfbuf_use_after_object_close(self, perf_bpf_path: Path) -> None:
         """Using perf buffer after BpfObject close raises BpfError."""
         obj = tinybpf.load(perf_bpf_path)
-        pb = tinybpf.BpfPerfBuffer(obj.map("events"), lambda c, d: None)
+        pb = tinybpf.BpfPerfBuffer(obj.maps["events"], lambda c, d: None)
         obj.close()
         with pytest.raises(tinybpf.BpfError, match="closed"):
             pb.poll()
@@ -119,7 +119,7 @@ class TestBpfPerfBuffer:
     def test_perfbuf_context_manager(self, perf_bpf_path: Path) -> None:
         """Perf buffer supports context manager protocol."""
         with tinybpf.load(perf_bpf_path) as obj:
-            with tinybpf.BpfPerfBuffer(obj.map("events"), lambda c, d: None) as pb:
+            with tinybpf.BpfPerfBuffer(obj.maps["events"], lambda c, d: None) as pb:
                 assert "open" in repr(pb)
             # Perf buffer should be closed after with block
             assert "closed" in repr(pb)
@@ -146,7 +146,7 @@ class TestBpfPerfBufferTyped:
 
         with tinybpf.load(perf_bpf_path) as obj:
             with obj.program("trace_getpid").attach():
-                with tinybpf.BpfPerfBuffer(obj.map("events"), callback, event_type=Event) as pb:
+                with tinybpf.BpfPerfBuffer(obj.maps["events"], callback, event_type=Event) as pb:
                     os.getpid()
                     pb.poll(timeout_ms=100)
 
@@ -167,7 +167,7 @@ class TestBpfPerfBufferTyped:
 
         with tinybpf.load(perf_bpf_path) as obj:
             with obj.program("trace_getpid").attach():
-                with tinybpf.BpfPerfBuffer(obj.map("events"), callback) as pb:
+                with tinybpf.BpfPerfBuffer(obj.maps["events"], callback) as pb:
                     os.getpid()
                     pb.poll(timeout_ms=100)
 
