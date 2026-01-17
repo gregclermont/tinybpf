@@ -30,7 +30,7 @@ class TestBpfRingBufferAsync:
 
         with tinybpf.load(ringbuf_bpf_path) as obj:
             with obj.program("trace_execve").attach():
-                async with tinybpf.BpfRingBuffer(obj.map("events"), callback) as rb:
+                async with tinybpf.BpfRingBuffer(obj.maps["events"], callback) as rb:
                     # Trigger event
                     subprocess.run(["/bin/true"], check=True)
                     await rb.poll_async(timeout_ms=100)
@@ -41,7 +41,7 @@ class TestBpfRingBufferAsync:
         """poll_async() respects timeout."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
             # Don't attach program, so no events will come
-            rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            rb = tinybpf.BpfRingBuffer(obj.maps["events"], lambda d: 0)
             start = time.monotonic()
             count = await rb.poll_async(timeout_ms=50)
             elapsed = time.monotonic() - start
@@ -53,7 +53,7 @@ class TestBpfRingBufferAsync:
     async def test_ringbuf_poll_async_nonblocking(self, ringbuf_bpf_path: Path) -> None:
         """poll_async(timeout_ms=0) is non-blocking."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
-            rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            rb = tinybpf.BpfRingBuffer(obj.maps["events"], lambda d: 0)
             count = await rb.poll_async(timeout_ms=0)
             assert count == 0
             rb.close()
@@ -65,7 +65,7 @@ class TestBpfRingBufferAsync:
         with tinybpf.load(ringbuf_bpf_path) as obj:
             with obj.program("trace_execve").attach():
                 # Iterator mode: no callback
-                rb = tinybpf.BpfRingBuffer(obj.map("events"))
+                rb = tinybpf.BpfRingBuffer(obj.maps["events"])
 
                 async def collect_events() -> None:
                     async for data in rb:
@@ -94,7 +94,7 @@ class TestBpfRingBufferAsync:
     async def test_ringbuf_async_context_manager(self, ringbuf_bpf_path: Path) -> None:
         """Ring buffer supports async context manager."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
-            async with tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0) as rb:
+            async with tinybpf.BpfRingBuffer(obj.maps["events"], lambda d: 0) as rb:
                 assert "open" in repr(rb)
             assert "closed" in repr(rb)
 
@@ -104,7 +104,7 @@ class TestBpfRingBufferAsync:
 
         with tinybpf.load(ringbuf_bpf_path) as obj:
             with obj.program("trace_execve").attach():
-                rb = tinybpf.BpfRingBuffer(obj.map("events"))
+                rb = tinybpf.BpfRingBuffer(obj.maps["events"])
 
                 async def collect() -> None:
                     async for event in rb.events():
@@ -139,8 +139,8 @@ class TestBpfRingBufferAsync:
             with obj.program("trace_execve").attach():
                 with obj.program("trace_getpid").attach():
                     rb = tinybpf.BpfRingBuffer()
-                    rb.add(obj.map("events"))
-                    rb.add(obj.map("events2"))
+                    rb.add(obj.maps["events"])
+                    rb.add(obj.maps["events2"])
 
                     async def collect() -> None:
                         async for event in rb.events():
@@ -174,7 +174,7 @@ class TestBpfRingBufferAsync:
     def test_ringbuf_tagged_events_on_callback_mode_error(self, ringbuf_bpf_path: Path) -> None:
         """events() raises error on callback-mode ring buffer."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
-            rb = tinybpf.BpfRingBuffer(obj.map("events"), lambda d: 0)
+            rb = tinybpf.BpfRingBuffer(obj.maps["events"], lambda d: 0)
             with pytest.raises(tinybpf.BpfError, match="callback-mode"):
                 rb.events()
             rb.close()

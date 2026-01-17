@@ -46,12 +46,12 @@ class TestBtfMapProperties:
             counters = obj.maps["counters"]
             btf_key = counters.btf_key
 
-            # Should have BTF info for the key
-            if btf_key is not None:
-                assert isinstance(btf_key, tinybpf.BtfType)
-                # Array keys are u32
-                assert btf_key.kind == tinybpf.BtfKind.INT
-                assert btf_key.size == 4
+            # BTF must be present in our test files (compiled with -g)
+            assert btf_key is not None, "BTF key info missing - test BPF file may not have BTF"
+            assert isinstance(btf_key, tinybpf.BtfType)
+            # Array keys are u32
+            assert btf_key.kind == tinybpf.BtfKind.INT
+            assert btf_key.size == 4
 
     def test_btf_value_property(self, test_maps_bpf_path: Path) -> None:
         """BpfMap.btf_value returns BTF type info for value."""
@@ -59,12 +59,12 @@ class TestBtfMapProperties:
             counters = obj.maps["counters"]
             btf_value = counters.btf_value
 
-            # Should have BTF info for the value
-            if btf_value is not None:
-                assert isinstance(btf_value, tinybpf.BtfType)
-                # Array values are u64
-                assert btf_value.kind == tinybpf.BtfKind.INT
-                assert btf_value.size == 8
+            # BTF must be present in our test files (compiled with -g)
+            assert btf_value is not None, "BTF value info missing - test BPF file may not have BTF"
+            assert isinstance(btf_value, tinybpf.BtfType)
+            # Array values are u64
+            assert btf_value.kind == tinybpf.BtfKind.INT
+            assert btf_value.size == 8
 
     def test_btf_properties_none_for_standalone(self, test_maps_bpf_path: Path) -> None:
         """BTF properties return None for standalone maps."""
@@ -136,53 +136,49 @@ class TestBtfAutoInference:
         with tinybpf.load(test_maps_bpf_path) as obj:
             counters = obj.maps["counters"]
 
+            # BTF must be present in our test files
+            assert counters.btf_value is not None, "BTF required for auto-inference test"
+
             # Write a value using bytes (raw)
             counters[0] = (42).to_bytes(8, "little")
 
             # Read should auto-infer int from BTF
             result = counters[0]
-            if counters.btf_value is not None:
-                # With BTF, should auto-infer int
-                assert isinstance(result, int)
-                assert result == 42
-            else:
-                # Without BTF, falls back to bytes
-                assert isinstance(result, bytes)
+            assert isinstance(result, int)
+            assert result == 42
 
     def test_auto_inference_int_key(self, test_maps_bpf_path: Path) -> None:
         """Map auto-infers INT type from BTF for keys."""
         with tinybpf.load(test_maps_bpf_path) as obj:
             counters = obj.maps["counters"]
 
+            # BTF must be present in our test files
+            assert counters.btf_key is not None, "BTF required for auto-inference test"
+
             # Write a value
             counters[0] = 100
 
             # Iterate over keys - should auto-infer int from BTF
             keys = list(counters.keys())
-            if counters.btf_key is not None:
-                # With BTF, keys should be ints
-                assert all(isinstance(k, int) for k in keys)
-            else:
-                # Without BTF, keys would be bytes
-                assert all(isinstance(k, int | bytes) for k in keys)
+            assert all(isinstance(k, int) for k in keys)
 
     def test_auto_inference_with_iteration(self, test_maps_bpf_path: Path) -> None:
         """Map iteration auto-infers types from BTF."""
         with tinybpf.load(test_maps_bpf_path) as obj:
             counters = obj.maps["counters"]
 
+            # BTF must be present in our test files
+            assert counters.btf_key is not None, "BTF required for auto-inference test"
+            assert counters.btf_value is not None, "BTF required for auto-inference test"
+
             # Set some values
             counters[0] = 10
             counters[1] = 20
 
-            # Check if BTF is available
-            has_btf = counters.btf_key is not None and counters.btf_value is not None
-
-            if has_btf:
-                # With BTF, items() should return (int, int) tuples
-                for key, value in counters.items():
-                    assert isinstance(key, int)
-                    assert isinstance(value, int)
+            # With BTF, items() should return (int, int) tuples
+            for key, value in counters.items():
+                assert isinstance(key, int)
+                assert isinstance(value, int)
 
     def test_explicit_type_overrides_auto_inference(self, test_maps_bpf_path: Path) -> None:
         """Explicit .typed() call overrides auto-inference."""
@@ -210,23 +206,19 @@ class TestBtfInspection:
         with tinybpf.load(test_maps_bpf_path) as obj:
             counters = obj.maps["counters"]
 
-            # BTF should correctly identify the value as INT
+            # BTF must be present in our test files
             btf_value = counters.btf_value
-            if btf_value is not None:
-                assert btf_value.kind == tinybpf.BtfKind.INT
-                assert btf_value.size == 8  # __u64
+            assert btf_value is not None, "BTF required for this test"
+            assert btf_value.kind == tinybpf.BtfKind.INT
+            assert btf_value.size == 8  # __u64
 
-            # With auto-inference, reading returns int (if BTF available)
+            # With auto-inference, reading returns int
             counters[0] = 12345
             result = counters[0]
-            if btf_value is not None:
-                assert isinstance(result, int)
-                assert result == 12345
-            else:
-                # Fallback to bytes without BTF
-                assert isinstance(result, bytes)
+            assert isinstance(result, int)
+            assert result == 12345
 
-            # With explicit typing via .typed(), returns int
+            # With explicit typing via .typed(), also returns int
             typed_counters = counters.typed(key=int, value=int)
             assert typed_counters[0] == 12345
             assert isinstance(typed_counters[0], int)
@@ -399,12 +391,12 @@ class TestGetBtfStructNames:
     def test_get_struct_names_returns_list(self, ringbuf_bpf_path: Path) -> None:
         """_get_btf_struct_names returns a list."""
         with tinybpf.load(ringbuf_bpf_path) as obj:
-            btf = obj.btf
-            if btf is not None:
-                names = obj._get_btf_struct_names()
-                assert isinstance(names, list)
-                # Note: The list may be empty if BTF doesn't include
-                # named struct definitions (common with some compile configs)
+            # BTF must be present in our test files
+            assert obj.btf is not None, "BTF required for this test"
+            names = obj._get_btf_struct_names()
+            assert isinstance(names, list)
+            # Note: The list may be empty if BTF doesn't include
+            # named struct definitions (common with some compile configs)
 
 
 class TestGracefulDegradation:

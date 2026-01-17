@@ -14,6 +14,8 @@ UNAME := $(shell uname)
 LIMA_VM ?= tinybpf
 PROJECT_DIR := $(shell pwd)
 ARCH := $(shell uname -m)
+# Use separate venv in Lima VM to avoid conflicts with macOS host
+LIMA_VENV := /tmp/tinybpf-venv
 
 # Compile eBPF programs using Docker (works on any OS)
 compile:
@@ -42,8 +44,8 @@ lima-create:
 	limactl start $(LIMA_VM)
 	@echo "Installing uv..."
 	limactl shell $(LIMA_VM) -- bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
-	@echo "Configuring uv to use separate venv (avoids conflicts with macOS)..."
-	limactl shell $(LIMA_VM) -- bash -c 'echo "export UV_PROJECT_ENVIRONMENT=/tmp/tinybpf-venv" >> ~/.bashrc'
+	@echo "Configuring uv to use separate venv for interactive shells..."
+	limactl shell $(LIMA_VM) -- bash -c 'grep -q UV_PROJECT_ENVIRONMENT ~/.bashrc 2>/dev/null || echo "export UV_PROJECT_ENVIRONMENT=$(LIMA_VENV)" >> ~/.bashrc'
 	@echo "Lima VM '$(LIMA_VM)' ready. Run 'make test' to test."
 
 lima-delete:
@@ -58,7 +60,7 @@ setup-lima:
 	limactl shell $(LIMA_VM) -- make -C $(PROJECT_DIR) setup-linux
 
 test-lima: compile setup-lima
-	limactl shell $(LIMA_VM) -- bash -c 'sudo $$HOME/.local/bin/uv run --project $(PROJECT_DIR) --with pytest --with pytest-asyncio pytest $(PROJECT_DIR)/tests -v'
+	limactl shell $(LIMA_VM) -- bash -c 'sudo UV_PROJECT_ENVIRONMENT=$(LIMA_VENV) $$HOME/.local/bin/uv run --project $(PROJECT_DIR) --with pytest --with pytest-asyncio pytest $(PROJECT_DIR)/tests -v'
 
 #
 # Auto-detect OS and dispatch to appropriate target
