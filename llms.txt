@@ -65,6 +65,12 @@ map.is_standalone   # True if opened from pinned path
 # Use .typed() for ctypes.Structure or explicit BTF validation
 map.typed(value=Event)         # -> BpfMap[Any, Event] for ctypes.Structure
 map.typed(key=int, value=int, validate_field_names=True)  # explicit validation
+# Common patterns with .typed()
+config_map = map.typed(key=ctypes.c_uint32, value=ConfigStruct)
+config_map[0] = Config(field=value)   # single-entry array map pattern
+stats_map = map.typed(key=ctypes.c_uint16, value=StatsStruct)
+for key, stats in stats_map.items():  # iterate with typed keys and values
+    print(key, stats.field)
 map.btf_key   # -> BtfType or None (BTF type info for key)
 map.btf_value # -> BtfType or None (BTF type info for value)
 
