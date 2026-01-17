@@ -411,3 +411,99 @@ class TestPinnedMaps:
         """Opening a non-existent pinned path should raise BpfError."""
         with pytest.raises(tinybpf.BpfError):
             tinybpf.open_pinned_map("/sys/fs/bpf/does_not_exist")
+
+
+class TestPerCpuMaps:
+    """Tests for per-CPU BPF map operations."""
+
+    def test_is_percpu_true_for_percpu_maps(self, test_maps_bpf_path: Path) -> None:
+        """is_percpu returns True for per-CPU map types."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            percpu_map = obj.maps["percpu_stats"]
+            assert percpu_map.is_percpu is True
+            assert percpu_map.type == tinybpf.BpfMapType.PERCPU_ARRAY
+
+    def test_is_percpu_false_for_regular_maps(self, test_maps_bpf_path: Path) -> None:
+        """is_percpu returns False for regular map types."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            array_map = obj.maps["counters"]
+            assert array_map.is_percpu is False
+
+            hash_map = obj.maps["pid_counts"]
+            assert hash_map.is_percpu is False
+
+    def test_lookup_raises_on_percpu_map(self, test_maps_bpf_path: Path) -> None:
+        """lookup() raises TypeError on per-CPU maps."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            percpu_map = obj.maps["percpu_stats"]
+            with pytest.raises(TypeError, match="lookup_percpu"):
+                percpu_map.lookup(0)
+
+    def test_update_raises_on_percpu_map(self, test_maps_bpf_path: Path) -> None:
+        """update() raises TypeError on per-CPU maps."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            percpu_map = obj.maps["percpu_stats"]
+            with pytest.raises(TypeError, match="not supported for per-CPU"):
+                percpu_map.update(0, 42)
+
+    def test_lookup_percpu_returns_list(self, test_maps_bpf_path: Path) -> None:
+        """lookup_percpu() returns a list of values per CPU."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            percpu_map = obj.maps["percpu_stats"]
+            # PERCPU_ARRAY always has all keys present (like regular arrays)
+            result = percpu_map.lookup_percpu(0)
+
+            assert result is not None
+            assert isinstance(result, list)
+            assert len(result) > 0  # At least one CPU
+            # Values are auto-inferred as int from BTF
+            assert all(isinstance(v, int) for v in result)
+
+    def test_lookup_percpu_sum_returns_total(self, test_maps_bpf_path: Path) -> None:
+        """lookup_percpu_sum() returns the sum across CPUs."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            percpu_map = obj.maps["percpu_stats"]
+            result = percpu_map.lookup_percpu_sum(0)
+
+            assert result is not None
+            assert isinstance(result, int | float)
+            # All values start at 0, so sum should be 0
+            assert result == 0
+
+    def test_lookup_percpu_raises_on_regular_map(self, test_maps_bpf_path: Path) -> None:
+        """lookup_percpu() raises TypeError on regular maps."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            array_map = obj.maps["counters"]
+            with pytest.raises(TypeError, match="only valid for per-CPU"):
+                array_map.lookup_percpu(0)
+
+    def test_items_percpu_iteration(self, test_maps_bpf_path: Path) -> None:
+        """items_percpu() iterates over all per-CPU entries."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            percpu_map = obj.maps["percpu_stats"]
+            # percpu_stats has max_entries=4
+            items = list(percpu_map.items_percpu())
+
+            # PERCPU_ARRAY always has all indices present
+            assert len(items) == 4
+            for key, values in items:
+                # Keys are auto-inferred as int from BTF
+                assert isinstance(key, int)
+                assert isinstance(values, list)
+                assert len(values) > 0
+
+    def test_items_percpu_raises_on_regular_map(self, test_maps_bpf_path: Path) -> None:
+        """items_percpu() raises TypeError on regular maps."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            array_map = obj.maps["counters"]
+            with pytest.raises(TypeError, match="only valid for per-CPU"):
+                list(array_map.items_percpu())
+
+    def test_typed_percpu_map(self, test_maps_bpf_path: Path) -> None:
+        """Typed view works with lookup_percpu()."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            percpu_map = obj.maps["percpu_stats"].typed(key=int, value=int)
+            result = percpu_map.lookup_percpu(0)
+
+            assert result is not None
+            assert all(isinstance(v, int) for v in result)
