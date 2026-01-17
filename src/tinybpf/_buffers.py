@@ -83,7 +83,8 @@ class BpfRingBuffer(Generic[T]):
         callback: Callable[[bytes], int] | Callable[[memoryview], int] | None = None,
         as_memoryview: bool = False,
         *,
-        btf_name: str | None = None,
+        validate_btf_struct: str | None = None,
+        validate_field_names: bool = True,
     ) -> None: ...
 
     @overload
@@ -94,7 +95,8 @@ class BpfRingBuffer(Generic[T]):
         as_memoryview: bool = False,
         *,
         event_type: type[T],
-        btf_name: str | None = None,
+        validate_btf_struct: str | None = None,
+        validate_field_names: bool = True,
     ) -> None: ...
 
     def __init__(
@@ -104,7 +106,8 @@ class BpfRingBuffer(Generic[T]):
         as_memoryview: bool = False,
         *,
         event_type: type[Any] = bytes,
-        btf_name: str | None = None,
+        validate_btf_struct: str | None = None,
+        validate_field_names: bool = True,
     ) -> None:
         """Create ring buffer consumer.
 
@@ -139,13 +142,28 @@ class BpfRingBuffer(Generic[T]):
                      ctypes.Structure subclass to have events auto-converted.
                      Defaults to bytes (no conversion). Cannot be combined
                      with as_memoryview=True.
-            btf_name: BTF struct name to validate against. If None, uses
-                     event_type.__name__. Use this when Python class name
-                     differs from BTF struct name (e.g., PascalCase vs snake_case).
+            validate_btf_struct: BTF struct name to validate event_type against.
+                     If provided, validates at creation time that the Python
+                     type matches the BTF struct's size and field layout. If
+                     event_type is registered in the type registry, validation
+                     happens automatically using the registered BTF name. If
+                     neither, no BTF validation occurs (only runtime size
+                     checking).
+
+                     Note: Event structs used only locally in BPF functions
+                     are often optimized out of BTF by the compiler. If you
+                     get a "not found in BTF" error, add a global anchor in
+                     your BPF code to preserve the struct:
+
+                         struct event _event_btf __attribute__((unused));
+            validate_field_names: Whether to validate that Python field names
+                     match BTF field names when BTF validation occurs.
+                     Defaults to True. Set to False to allow field renaming.
 
         Raises:
             ValueError: If callback is provided without map.
-            BpfError: If as_memoryview=True without callback or with event_type.
+            BpfError: If as_memoryview=True without callback or with event_type,
+                     or if validate_btf_struct conflicts with type registry.
             BtfValidationError: If event_type doesn't match BTF metadata.
         """
         # Set _closed early so __del__ works if __init__ raises
@@ -178,7 +196,8 @@ class BpfRingBuffer(Generic[T]):
 
         # Event type tracking for typed events
         self._event_type: type[Any] = event_type
-        self._btf_name: str | None = btf_name
+        self._validate_btf_struct: str | None = validate_btf_struct
+        self._validate_field_names: bool = validate_field_names
         # Per-map event types for callback mode (callback per map can have different types)
         self._per_map_event_types: dict[str, type[Any]] = {}
 
@@ -188,52 +207,103 @@ class BpfRingBuffer(Generic[T]):
         self._closed = False
 
         if map is not None:
-            # Validate event_type against BTF if available
-            if event_type is not bytes:
-                self._validate_event_type(map, event_type, btf_name)
-            self.add(map, callback, as_memoryview=as_memoryview, event_type=event_type)
+            self.add(
+                map,
+                callback,
+                as_memoryview=as_memoryview,
+                event_type=event_type,
+                validate_btf_struct=validate_btf_struct,
+                validate_field_names=validate_field_names,
+            )
 
     def _validate_event_type(
         self,
         map: BpfMap[Any, Any],
         event_type: type,
-        btf_name: str | None,
+        validate_btf_struct: str | None,
+        validate_field_names: bool,
     ) -> None:
         """Validate event_type against BTF metadata.
 
-        Validation is best-effort: if BTF is not available or the struct
-        is not found in BTF, validation is silently skipped. Errors are
-        only raised for actual mismatches (size, field count, etc.).
+        Validation precedence:
+        1. Explicit validate_btf_struct → use it (error if conflicts with registry)
+        2. event_type in type registry → automatic validation via reverse lookup
+        3. Neither → no BTF validation (only runtime size checking)
 
         Args:
             map: The ring buffer map (used to get BTF from parent object).
             event_type: The Python type to validate.
-            btf_name: Override BTF struct name (defaults to event_type.__name__).
+            validate_btf_struct: Explicit BTF struct name to validate against.
+            validate_field_names: Whether to validate field names.
 
         Raises:
+            BpfError: If validate_btf_struct conflicts with type registry.
             BtfValidationError: If validation finds a mismatch.
         """
-        # Get BTF from map's parent object
-        btf = map._obj.btf if map._obj else None
-        if btf is None:
-            # Graceful degradation - no BTF validation
+        obj = map._obj
+        if obj is None:
             return
 
-        lookup_name = btf_name or event_type.__name__
+        # Determine BTF struct name using precedence rules
+        btf_struct_name: str | None = None
+
+        # Check if type is registered in the registry
+        registered_name = obj.lookup_btf_name(event_type)
+
+        if validate_btf_struct is not None:
+            # Explicit validate_btf_struct provided
+            if registered_name is not None and registered_name != validate_btf_struct:
+                # Conflict: type is registered with different name
+                raise BpfError(
+                    f"Type '{event_type.__name__}' is registered as BTF struct "
+                    f"'{registered_name}', but validate_btf_struct='{validate_btf_struct}' "
+                    f"was specified. Remove validate_btf_struct to use the registered "
+                    f"mapping, or use a different Python type."
+                )
+            btf_struct_name = validate_btf_struct
+        elif registered_name is not None:
+            # Type is registered - use registered name for automatic validation
+            btf_struct_name = registered_name
+        else:
+            # Not registered and no explicit name - no BTF validation
+            return
+
+        # Get BTF from map's parent object
+        btf = obj.btf
+        if btf is None:
+            # No BTF available - can't validate
+            if validate_btf_struct is not None:
+                # User explicitly requested validation but BTF not available
+                raise BpfError(
+                    f"Cannot validate against BTF struct '{btf_struct_name}': "
+                    "no BTF information available"
+                )
+            return
+
         lib = bindings._get_lib()
 
         # Find the BTF struct by name
-        type_id = lib.btf__find_by_name_kind(btf, lookup_name.encode(), BtfKind.STRUCT)
+        type_id = lib.btf__find_by_name_kind(btf, btf_struct_name.encode(), BtfKind.STRUCT)
 
         if type_id < 0:
-            # Struct not found in BTF - gracefully skip validation
-            # This is common when BTF doesn't include all struct names
+            if validate_btf_struct is not None:
+                # User explicitly requested validation but struct not found
+                raise BpfError(
+                    f"BTF struct '{btf_struct_name}' not found in BTF. "
+                    f"Event structs used only locally in BPF functions are often optimized out. "
+                    f"To include the struct in BTF, add a global anchor in your BPF code: "
+                    f"struct {btf_struct_name} _{btf_struct_name}_btf __attribute__((unused));"
+                )
+            # Registered type but struct not in BTF - skip validation
+            # (This shouldn't happen if register_type is strict, but handle it)
             return
 
         # Resolve and validate
-        btf_type = map._obj._resolve_btf_type(type_id) if map._obj else None
-        if btf_type is not None and map._obj is not None:
-            map._obj._validate_python_type(event_type, btf_type, validate_names=True)
+        btf_type = obj._resolve_btf_type(type_id)
+        if btf_type is not None:
+            obj._validate_python_type(
+                event_type, btf_type, validate_field_names=validate_field_names
+            )
 
     @overload
     def add(
@@ -242,7 +312,8 @@ class BpfRingBuffer(Generic[T]):
         callback: Callable[[bytes], int] | Callable[[memoryview], int] | None = None,
         as_memoryview: bool | None = None,
         *,
-        btf_name: str | None = None,
+        validate_btf_struct: str | None = None,
+        validate_field_names: bool | None = None,
     ) -> None: ...
 
     @overload
@@ -253,7 +324,8 @@ class BpfRingBuffer(Generic[T]):
         as_memoryview: bool | None = None,
         *,
         event_type: type[T],
-        btf_name: str | None = None,
+        validate_btf_struct: str | None = None,
+        validate_field_names: bool | None = None,
     ) -> None: ...
 
     def add(  # noqa: PLR0912
@@ -263,7 +335,8 @@ class BpfRingBuffer(Generic[T]):
         as_memoryview: bool | None = None,
         *,
         event_type: type[Any] | None = None,
-        btf_name: str | None = None,
+        validate_btf_struct: str | None = None,
+        validate_field_names: bool | None = None,
     ) -> None:
         """Add a ring buffer map to this consumer.
 
@@ -279,9 +352,11 @@ class BpfRingBuffer(Generic[T]):
                      ctypes.Structure subclass to have events auto-converted.
                      If None, uses the instance default from constructor.
                      In iterator mode, all maps must use the same event_type.
-            btf_name: BTF struct name to validate against. If None, uses
-                     event_type.__name__. Use when Python class name differs
-                     from BTF struct name.
+            validate_btf_struct: BTF struct name to validate against.
+                     If None, uses instance default. If event_type is registered
+                     in the type registry, validation happens automatically.
+            validate_field_names: Whether to validate field names.
+                     If None, uses the instance default from constructor.
 
         Raises:
             BpfError: If ring buffer is closed, map type is wrong,
@@ -342,10 +417,15 @@ class BpfRingBuffer(Generic[T]):
             self._per_map_event_types[map.name] = use_event_type
 
         # Validate event_type against BTF if applicable
-        # Use btf_name parameter or fall back to instance default
-        use_btf_name = btf_name if btf_name is not None else self._btf_name
+        # Use parameters or fall back to instance defaults
+        use_btf_struct = (
+            validate_btf_struct if validate_btf_struct is not None else self._validate_btf_struct
+        )
+        use_field_names = (
+            validate_field_names if validate_field_names is not None else self._validate_field_names
+        )
         if use_event_type is not bytes:
-            self._validate_event_type(map, use_event_type, use_btf_name)
+            self._validate_event_type(map, use_event_type, use_btf_struct, use_field_names)
 
         # Create ctypes callback wrapper
         if callback is not None:
@@ -782,7 +862,8 @@ class BpfPerfBuffer(Generic[T]):
         lost_callback: Callable[[int, int], None] | None = None,
         page_count: int = 8,
         *,
-        btf_name: str | None = None,
+        validate_btf_struct: str | None = None,
+        validate_field_names: bool = True,
     ) -> None: ...
 
     @overload
@@ -794,7 +875,8 @@ class BpfPerfBuffer(Generic[T]):
         page_count: int = 8,
         *,
         event_type: type[T],
-        btf_name: str | None = None,
+        validate_btf_struct: str | None = None,
+        validate_field_names: bool = True,
     ) -> None: ...
 
     def __init__(
@@ -805,7 +887,8 @@ class BpfPerfBuffer(Generic[T]):
         page_count: int = 8,
         *,
         event_type: type[Any] = bytes,
-        btf_name: str | None = None,
+        validate_btf_struct: str | None = None,
+        validate_field_names: bool = True,
     ) -> None:
         """Create perf buffer consumer.
 
@@ -822,12 +905,17 @@ class BpfPerfBuffer(Generic[T]):
             event_type: Type for automatic event conversion. Pass a
                      ctypes.Structure subclass to have events auto-converted.
                      Defaults to bytes (no conversion).
-            btf_name: BTF struct name to validate against. If None, uses
-                     event_type.__name__. Use this when Python class name
-                     differs from BTF struct name (e.g., PascalCase vs snake_case).
+            validate_btf_struct: BTF struct name to validate event_type against.
+                     If provided, validates at creation time. If event_type is
+                     registered in the type registry, validation happens
+                     automatically using the registered BTF name.
+            validate_field_names: Whether to validate that Python field names
+                     match BTF field names when BTF validation occurs.
+                     Defaults to True. Set to False to allow field renaming.
 
         Raises:
-            BpfError: If map is not a perf event array type.
+            BpfError: If map is not a perf event array type, or if
+                     validate_btf_struct conflicts with type registry.
             ValueError: If page_count is not a power of 2.
             BtfValidationError: If event_type doesn't match BTF metadata.
         """
@@ -840,9 +928,9 @@ class BpfPerfBuffer(Generic[T]):
         if page_count <= 0 or (page_count & (page_count - 1)) != 0:
             raise ValueError(f"page_count must be a power of 2, got {page_count}")
 
-        # Validate event_type against BTF if available
+        # Validate event_type against BTF if applicable
         if event_type is not bytes:
-            self._validate_event_type(map, event_type, btf_name)
+            self._validate_event_type(map, event_type, validate_btf_struct, validate_field_names)
 
         self._map = map
         self._obj = map._obj  # For use-after-close detection
@@ -855,7 +943,9 @@ class BpfPerfBuffer(Generic[T]):
         def _sample_wrapper(ctx: Any, cpu: int, data: Any, size: int) -> None:
             try:
                 event_data = ctypes.string_at(data, size)
-                typed_event = _from_event_bytes(event_data, self._event_type)
+                # Perf buffers may have up to 7 bytes of trailing padding/garbage
+                # due to kernel alignment requirements, so use strict_size=False
+                typed_event = _from_event_bytes(event_data, self._event_type, strict_size=False)
                 self._user_sample_callback(cpu, typed_event)
             except BaseException as e:
                 self._stored_exception = e
@@ -899,43 +989,89 @@ class BpfPerfBuffer(Generic[T]):
         self,
         map: BpfMap[Any, Any],
         event_type: type,
-        btf_name: str | None,
+        validate_btf_struct: str | None,
+        validate_field_names: bool,
     ) -> None:
         """Validate event_type against BTF metadata.
 
-        Validation is best-effort: if BTF is not available or the struct
-        is not found in BTF, validation is silently skipped. Errors are
-        only raised for actual mismatches (size, field count, etc.).
+        Validation precedence:
+        1. Explicit validate_btf_struct → use it (error if conflicts with registry)
+        2. event_type in type registry → automatic validation via reverse lookup
+        3. Neither → no BTF validation (only runtime size checking)
 
         Args:
             map: The perf buffer map (used to get BTF from parent object).
             event_type: The Python type to validate.
-            btf_name: Override BTF struct name (defaults to event_type.__name__).
+            validate_btf_struct: Explicit BTF struct name to validate against.
+            validate_field_names: Whether to validate field names.
 
         Raises:
+            BpfError: If validate_btf_struct conflicts with type registry.
             BtfValidationError: If validation finds a mismatch.
         """
-        # Get BTF from map's parent object
-        btf = map._obj.btf if map._obj else None
-        if btf is None:
-            # Graceful degradation - no BTF validation
+        obj = map._obj
+        if obj is None:
             return
 
-        lookup_name = btf_name or event_type.__name__
+        # Determine BTF struct name using precedence rules
+        btf_struct_name: str | None = None
+
+        # Check if type is registered in the registry
+        registered_name = obj.lookup_btf_name(event_type)
+
+        if validate_btf_struct is not None:
+            # Explicit validate_btf_struct provided
+            if registered_name is not None and registered_name != validate_btf_struct:
+                # Conflict: type is registered with different name
+                raise BpfError(
+                    f"Type '{event_type.__name__}' is registered as BTF struct "
+                    f"'{registered_name}', but validate_btf_struct='{validate_btf_struct}' "
+                    f"was specified. Remove validate_btf_struct to use the registered "
+                    f"mapping, or use a different Python type."
+                )
+            btf_struct_name = validate_btf_struct
+        elif registered_name is not None:
+            # Type is registered - use registered name for automatic validation
+            btf_struct_name = registered_name
+        else:
+            # Not registered and no explicit name - no BTF validation
+            return
+
+        # Get BTF from map's parent object
+        btf = obj.btf
+        if btf is None:
+            # No BTF available - can't validate
+            if validate_btf_struct is not None:
+                # User explicitly requested validation but BTF not available
+                raise BpfError(
+                    f"Cannot validate against BTF struct '{btf_struct_name}': "
+                    "no BTF information available"
+                )
+            return
+
         lib = bindings._get_lib()
 
         # Find the BTF struct by name
-        type_id = lib.btf__find_by_name_kind(btf, lookup_name.encode(), BtfKind.STRUCT)
+        type_id = lib.btf__find_by_name_kind(btf, btf_struct_name.encode(), BtfKind.STRUCT)
 
         if type_id < 0:
-            # Struct not found in BTF - gracefully skip validation
-            # This is common when BTF doesn't include all struct names
+            if validate_btf_struct is not None:
+                # User explicitly requested validation but struct not found
+                raise BpfError(
+                    f"BTF struct '{btf_struct_name}' not found in BTF. "
+                    f"Event structs used only locally in BPF functions are often optimized out. "
+                    f"To include the struct in BTF, add a global anchor in your BPF code: "
+                    f"struct {btf_struct_name} _{btf_struct_name}_btf __attribute__((unused));"
+                )
+            # Registered type but struct not in BTF - skip validation
             return
 
         # Resolve and validate
-        btf_type = map._obj._resolve_btf_type(type_id) if map._obj else None
-        if btf_type is not None and map._obj is not None:
-            map._obj._validate_python_type(event_type, btf_type, validate_names=True)
+        btf_type = obj._resolve_btf_type(type_id)
+        if btf_type is not None:
+            obj._validate_python_type(
+                event_type, btf_type, validate_field_names=validate_field_names
+            )
 
     def poll(self, timeout_ms: int = -1) -> int:
         """Poll for events from all CPUs.

@@ -279,18 +279,54 @@ def _check_err(ret: int, operation: str) -> None:
         raise BpfError(f"{operation} failed: {msg}", errno=err_abs)
 
 
-def _from_event_bytes(data: bytes, event_type: type[T]) -> T:
+def _from_event_bytes(data: bytes, event_type: type[T], *, strict_size: bool = True) -> T:
     """Convert bytes to event type (ctypes.Structure or bytes passthrough).
 
     Args:
         data: Raw event bytes from ring buffer or perf buffer.
         event_type: Target type (bytes or a ctypes.Structure subclass).
+        strict_size: If True, require exact size match (used for ring buffers).
+            If False, allow extra trailing bytes but require them to be zeros
+            (used for perf buffers which have kernel-added padding).
 
     Returns:
         Event data converted to the specified type.
+
+    Raises:
+        BpfError: If size validation fails:
+            - Data smaller than expected type size
+            - strict_size=True and data size doesn't match exactly
+            - strict_size=False and extra trailing bytes are non-zero
+
+    Note:
+        Perf buffers (BPF_MAP_TYPE_PERF_EVENT_ARRAY) pad data to 64-bit alignment
+        with zeros. If you receive non-zero trailing bytes, this likely indicates
+        a struct size mismatch. If you encounter a kernel bug causing non-zero
+        garbage bytes, use event_type=bytes as a workaround.
     """
     if event_type is bytes:
         return data  # type: ignore[return-value]
     # ctypes.Structure - cast to Any to access from_buffer_copy
     struct_type: Any = event_type
+    expected_size = ctypes.sizeof(struct_type)
+    if len(data) < expected_size:
+        raise BpfError(
+            f"Event size mismatch: received {len(data)} bytes, "
+            f"expected {expected_size} for {struct_type.__name__}"
+        )
+    if strict_size and len(data) != expected_size:
+        raise BpfError(
+            f"Event size mismatch: received {len(data)} bytes, "
+            f"expected exactly {expected_size} for {struct_type.__name__}"
+        )
+    if not strict_size and len(data) > expected_size:
+        # Perf buffer padding should be zeros; non-zero indicates mismatch
+        trailing = data[expected_size:]
+        if any(b != 0 for b in trailing):
+            raise BpfError(
+                f"Event size mismatch: received {len(data)} bytes with non-zero "
+                f"trailing data, expected {expected_size} for {struct_type.__name__}. "
+                f"This likely indicates your Python struct doesn't match the BPF struct."
+            )
+    # from_buffer_copy uses only the first expected_size bytes
     return struct_type.from_buffer_copy(data)

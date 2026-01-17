@@ -12,6 +12,10 @@ struct event {
     char comm[16];
 };
 
+// Export struct to BTF for validation testing
+// Without this anchor, the struct is optimized out of BTF
+struct event _event_btf_anchor __attribute__((unused));
+
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 256 * 1024);

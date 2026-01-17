@@ -189,7 +189,7 @@ class BpfMap(Generic[KT, VT]):
         *,
         key: builtins.type[KT] | None = None,
         value: builtins.type[VT] | None = None,
-        validate_names: bool = True,
+        validate_field_names: bool = True,
     ) -> BpfMap[KT, VT]:
         """Return a new typed view of this map with BTF validation.
 
@@ -200,8 +200,8 @@ class BpfMap(Generic[KT, VT]):
         Args:
             key: Type for keys (int or ctypes.Structure subclass).
             value: Type for values (int or ctypes.Structure subclass).
-            validate_names: If True, validate field names match BTF.
-                           If False, only validate sizes and offsets.
+            validate_field_names: If True, validate field names match BTF.
+                If False, only validate sizes and offsets.
 
         Returns:
             A new BpfMap instance with type conversion enabled.
@@ -222,9 +222,9 @@ class BpfMap(Generic[KT, VT]):
             events = obj.maps["events"].typed(value=Event)
         """
         if value is not None:
-            self._validate_type(value, self.btf_value, validate_names)
+            self._validate_type(value, self.btf_value, validate_field_names)
         if key is not None:
-            self._validate_type(key, self.btf_key, validate_names)
+            self._validate_type(key, self.btf_key, validate_field_names)
 
         return BpfMap(
             self._ptr,
@@ -243,14 +243,14 @@ class BpfMap(Generic[KT, VT]):
         self,
         python_type: builtins.type,
         btf_type: BtfType | None,
-        validate_names: bool,
+        validate_field_names: bool,
     ) -> None:
         """Validate Python type against BTF type.
 
         Args:
             python_type: The Python type to validate.
             btf_type: The BTF type to validate against (None if no BTF).
-            validate_names: Whether to validate field names.
+            validate_field_names: Whether to validate field names.
 
         Raises:
             BtfValidationError: If validation fails.
@@ -269,7 +269,7 @@ class BpfMap(Generic[KT, VT]):
 
         # Delegate to object's validation if available
         if self._obj is not None:
-            self._obj._validate_python_type(python_type, btf_type, validate_names)
+            self._obj._validate_python_type(python_type, btf_type, validate_field_names)
 
     def _check_open(self) -> None:
         """Raise if map is not usable."""

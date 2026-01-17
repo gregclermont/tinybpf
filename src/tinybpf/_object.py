@@ -20,6 +20,7 @@ from tinybpf._libbpf import bindings
 from tinybpf._map import BpfMap, MapCollection
 from tinybpf._program import BpfProgram, ProgramCollection
 from tinybpf._types import (
+    BpfError,
     BtfField,
     BtfKind,
     BtfType,
@@ -52,7 +53,8 @@ class BpfObject:
         self._path = path
         self._closed = False
         self._btf_ptr: Any = None  # Lazy-loaded
-        self._type_registry: dict[str, type] = {}
+        self._type_registry: dict[str, type] = {}  # btf_name -> python_type
+        self._reverse_type_registry: dict[type, str] = {}  # python_type -> btf_name
 
         lib = bindings._get_lib()
         name = lib.bpf_object__name(obj_ptr)
@@ -142,40 +144,103 @@ class BpfObject:
             return None
         return self._btf_ptr
 
-    def register_type(self, btf_name: str, python_type: type) -> None:
+    def register_type(
+        self,
+        btf_name: str,
+        python_type: type,
+        validate_field_names: bool = True,
+    ) -> None:
         """Register a Python type for a BTF struct name.
 
-        This validates the Python type against BTF metadata if available.
-        If BTF is not available or the struct is not found in BTF,
-        the type is registered without validation.
+        This validates the Python type against BTF metadata. The BTF struct
+        must exist - registration fails if the struct is not found in BTF.
+
+        The registry enforces a 1:1 mapping: each Python type can only be
+        registered to one BTF struct name, and vice versa.
+
+        Note: Event structs used only locally in BPF functions are often
+        optimized out of BTF by the compiler. If you get a "not found in BTF"
+        error, add a global anchor in your BPF code to preserve the struct::
+
+            struct event _event_btf __attribute__((unused));
 
         Args:
-            btf_name: The BTF struct name.
+            btf_name: The BTF struct name (must exist in BTF).
             python_type: The Python ctypes.Structure type.
+            validate_field_names: Whether to validate that Python field names
+                match BTF field names. Set to False if you want to rename
+                fields in your Python type. Defaults to True.
 
         Raises:
-            BtfValidationError: If validation finds a mismatch.
+            BpfError: If BTF is not available, the struct is not found in BTF,
+                or the type/name is already registered.
+            BtfValidationError: If validation finds a size/offset mismatch,
+                or field name mismatch (when validate_field_names=True).
         """
+        # Check for duplicate registration
+        if btf_name in self._type_registry:
+            existing_type = self._type_registry[btf_name]
+            if existing_type is python_type:
+                return  # Already registered with same type - no-op
+            raise BpfError(
+                f"BTF struct '{btf_name}' is already registered "
+                f"with type '{existing_type.__name__}'"
+            )
+        if python_type in self._reverse_type_registry:
+            existing_name = self._reverse_type_registry[python_type]
+            raise BpfError(
+                f"Type '{python_type.__name__}' is already registered "
+                f"as BTF struct '{existing_name}'"
+            )
+
+        # Require BTF to be available
         btf = self.btf
         if btf is None:
-            # No BTF available, just register without validation
-            self._type_registry[btf_name] = python_type
-            return
+            raise BpfError(
+                f"Cannot register type for BTF struct '{btf_name}': no BTF information available"
+            )
 
         lib = bindings._get_lib()
         type_id = lib.btf__find_by_name_kind(btf, btf_name.encode(), BtfKind.STRUCT)
 
         if type_id < 0:
-            # Struct not found in BTF - register without validation
-            # This is common when BTF doesn't include all struct names
-            self._type_registry[btf_name] = python_type
-            return
+            raise BpfError(
+                f"BTF struct '{btf_name}' not found in BTF. "
+                f"Event structs used only locally in BPF functions are often optimized out. "
+                f"To include the struct in BTF, add a global anchor in your BPF code: "
+                f"struct {btf_name} _{btf_name}_btf __attribute__((unused));"
+            )
 
         btf_type = self._resolve_btf_type(type_id)
         if btf_type is not None:
-            self._validate_python_type(python_type, btf_type, validate_names=True)
+            self._validate_python_type(
+                python_type, btf_type, validate_field_names=validate_field_names
+            )
 
         self._type_registry[btf_name] = python_type
+        self._reverse_type_registry[python_type] = btf_name
+
+    def lookup_type(self, btf_name: str) -> type | None:
+        """Look up a registered Python type by BTF struct name.
+
+        Args:
+            btf_name: The BTF struct name.
+
+        Returns:
+            The registered Python type, or None if not registered.
+        """
+        return self._type_registry.get(btf_name)
+
+    def lookup_btf_name(self, python_type: type) -> str | None:
+        """Look up the registered BTF struct name for a Python type.
+
+        Args:
+            python_type: The Python type.
+
+        Returns:
+            The registered BTF struct name, or None if not registered.
+        """
+        return self._reverse_type_registry.get(python_type)
 
     def _resolve_btf_type(self, type_id: int) -> BtfType | None:
         """Resolve BTF type ID to BtfType, following typedefs.
@@ -295,7 +360,7 @@ class BpfObject:
         return names
 
     def _validate_python_type(
-        self, python_type: type, btf_type: BtfType, validate_names: bool
+        self, python_type: type, btf_type: BtfType, validate_field_names: bool
     ) -> None:
         """Validate Python type against BTF type."""
         # Size check
@@ -329,7 +394,7 @@ class BpfObject:
                     )
 
                 # Name check (if enabled)
-                if validate_names and py_name != btf_field.name:
+                if validate_field_names and py_name != btf_field.name:
                     raise BtfValidationError(
                         f"Field name mismatch: Python field '{py_name}', "
                         f"BTF field '{btf_field.name}' at offset {btf_field.offset}"
