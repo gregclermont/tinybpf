@@ -91,6 +91,31 @@ struct event _event_btf __attribute__((unused));
 
 ### BpfProgram
 
+Section names determine program type and auto-attach behavior:
+
+| Section Pattern | Program Type | Auto-attach |
+|----------------|--------------|-------------|
+| `kprobe/<func>` | kprobe | Yes, to function |
+| `kretprobe/<func>` | kretprobe | Yes, to function |
+| `tracepoint/<cat>/<name>` | tracepoint | Yes |
+| `raw_tracepoint/<name>` | raw tracepoint | Yes |
+| `fentry/<func>` | fentry | Yes (kernel 5.5+) |
+| `fexit/<func>` | fexit | Yes (kernel 5.5+) |
+| `xdp` | XDP | No, use `attach_xdp()` |
+| `tc` | TC classifier | No |
+| `socket` | socket filter | No |
+
+For program types without auto-attach info in the section name (like `xdp`), use function names to distinguish multiple programs and attach explicitly:
+
+```c
+SEC("xdp") int xdp_pass(struct xdp_md *ctx) { return XDP_PASS; }
+SEC("xdp") int xdp_drop(struct xdp_md *ctx) { return XDP_DROP; }
+```
+
+```python
+obj.programs["xdp_pass"].attach_xdp(ifindex)
+```
+
 Attach methods:
 - `attach()` - Auto-attach based on section name
 - `attach_kprobe(func_name, retprobe=False)`
