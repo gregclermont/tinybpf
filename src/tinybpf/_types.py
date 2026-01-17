@@ -2,8 +2,9 @@
 
 This module contains foundational types used throughout tinybpf:
 - BpfError exception
-- BpfMapType and BpfProgType enums
-- MapInfo, ProgramInfo, RingBufferEvent dataclasses
+- BtfValidationError exception for BTF type mismatches
+- BpfMapType, BpfProgType, and BtfKind enums
+- MapInfo, ProgramInfo, RingBufferEvent, BtfType, BtfField dataclasses
 - Map update flag constants
 - Error checking helper functions
 """
@@ -25,6 +26,19 @@ class BpfError(Exception):
 
     def __init__(self, message: str, errno: int = 0) -> None:
         self.errno = errno
+        super().__init__(message)
+
+
+class BtfValidationError(BpfError):
+    """Exception for BTF type validation failures.
+
+    Raised when a Python type doesn't match the expected BTF type metadata.
+    The suggestions list may contain struct names from BTF to help users
+    find the correct type name.
+    """
+
+    def __init__(self, message: str, suggestions: list[str] | None = None) -> None:
+        self.suggestions = suggestions or []
         super().__init__(message)
 
 
@@ -103,6 +117,34 @@ class BpfProgType(IntEnum):
     SYSCALL = 31
 
 
+class BtfKind(IntEnum):
+    """BTF type kinds.
+
+    Defines the various BTF type kinds used for type introspection.
+    """
+
+    UNKN = 0
+    INT = 1
+    PTR = 2
+    ARRAY = 3
+    STRUCT = 4
+    UNION = 5
+    ENUM = 6
+    FWD = 7
+    TYPEDEF = 8
+    VOLATILE = 9
+    CONST = 10
+    RESTRICT = 11
+    FUNC = 12
+    FUNC_PROTO = 13
+    VAR = 14
+    DATASEC = 15
+    FLOAT = 16
+    DECL_TAG = 17
+    TYPE_TAG = 18
+    ENUM64 = 19
+
+
 # Map update flags
 BPF_ANY = 0  # Create new or update existing
 BPF_NOEXIST = 1  # Create new only if it doesn't exist
@@ -164,6 +206,55 @@ class RingBufferEvent(Generic[T]):
 
     map_name: str
     data: T
+
+
+@dataclass(frozen=True)
+class BtfField:
+    """Information about a field in a BTF struct or union.
+
+    Attributes:
+        name: Field name.
+        offset: Offset from start of struct in bytes.
+        size: Size of the field in bytes.
+    """
+
+    name: str
+    offset: int  # bytes
+    size: int
+
+
+@dataclass(frozen=True)
+class BtfType:
+    """BTF type information.
+
+    Describes a type from BTF metadata including its name, kind, size,
+    and for structs/unions, its fields.
+
+    Attributes:
+        name: Type name (e.g., "unsigned int", "event").
+        kind: The BTF kind (INT, STRUCT, etc.).
+        size: Size in bytes (None for pointer types, typedefs).
+        fields: Tuple of BtfField for STRUCT/UNION, None for other kinds.
+    """
+
+    name: str
+    kind: BtfKind
+    size: int | None
+    fields: tuple[BtfField, ...] | None = None
+
+
+def btf_kind(info: int) -> int:
+    """Extract BTF kind from info field."""
+    return (info >> 24) & 0x1F
+
+
+def btf_vlen(info: int) -> int:
+    """Extract vlen (variable length) from BTF info field.
+
+    For STRUCT/UNION, this is the number of members.
+    For ENUM, this is the number of enumerators.
+    """
+    return info & 0xFFFF
 
 
 def _check_ptr(ptr: Any, operation: str) -> None:

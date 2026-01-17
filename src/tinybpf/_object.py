@@ -12,19 +12,26 @@ Example:
 
 from __future__ import annotations
 
+import ctypes
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any
 
 from tinybpf._libbpf import bindings
 from tinybpf._map import BpfMap, MapCollection
 from tinybpf._program import BpfProgram, ProgramCollection
-from tinybpf._types import _check_err, _check_ptr
+from tinybpf._types import (
+    BtfField,
+    BtfKind,
+    BtfType,
+    BtfValidationError,
+    _check_err,
+    _check_ptr,
+    btf_kind,
+    btf_vlen,
+)
 
 if TYPE_CHECKING:
     from types import TracebackType
-
-KT = TypeVar("KT")
-VT = TypeVar("VT")
 
 
 class BpfObject:
@@ -44,6 +51,8 @@ class BpfObject:
         self._ptr = obj_ptr
         self._path = path
         self._closed = False
+        self._btf_ptr: Any = None  # Lazy-loaded
+        self._type_registry: dict[str, type] = {}
 
         lib = bindings._get_lib()
         name = lib.bpf_object__name(obj_ptr)
@@ -118,76 +127,213 @@ class BpfObject:
         """
         return self._programs[name]
 
-    @overload
-    def map(self, name: str) -> BpfMap[Any, Any]: ...
-
-    @overload
-    def map(
-        self,
-        name: str,
-        *,
-        key_type: type[KT],
-        value_type: type[VT],
-    ) -> BpfMap[KT, VT]: ...
-
-    @overload
-    def map(
-        self,
-        name: str,
-        *,
-        key_type: type[KT],
-    ) -> BpfMap[KT, Any]: ...
-
-    @overload
-    def map(
-        self,
-        name: str,
-        *,
-        value_type: type[VT],
-    ) -> BpfMap[Any, VT]: ...
-
-    def map(
-        self,
-        name: str,
-        *,
-        key_type: type[KT] | None = None,
-        value_type: type[VT] | None = None,
-    ) -> BpfMap[KT, VT]:
-        """Get a map by name, optionally with typed access.
-
-        Args:
-            name: The map name.
-            key_type: Type for keys (int or ctypes.Structure subclass).
-                      If specified, keys are auto-converted on read.
-            value_type: Type for values (int or ctypes.Structure subclass).
-                        If specified, values are auto-converted on read.
+    @property
+    def btf(self) -> Any | None:
+        """Get BTF pointer (lazy-loaded).
 
         Returns:
-            The BpfMap instance. If types are specified, returns a typed
-            view that auto-converts on read operations.
+            BTF pointer if BTF is available, None otherwise.
+        """
+        if self._btf_ptr is None:
+            lib = bindings._get_lib()
+            self._btf_ptr = lib.bpf_object__btf(self._ptr)
+        # Check if BTF pointer is NULL (no BTF info)
+        if not self._btf_ptr:
+            return None
+        return self._btf_ptr
+
+    def register_type(self, btf_name: str, python_type: type) -> None:
+        """Register a Python type for a BTF struct name.
+
+        This validates the Python type against BTF metadata if available.
+        If BTF is not available or the struct is not found in BTF,
+        the type is registered without validation.
+
+        Args:
+            btf_name: The BTF struct name.
+            python_type: The Python ctypes.Structure type.
 
         Raises:
-            KeyError: If map not found.
-
-        Example:
-            # Untyped (returns bytes)
-            map = obj.map("counters")
-            raw = map[key]  # bytes
-
-            # Typed (auto-converts)
-            map = obj.map("counters", key_type=int, value_type=int)
-            count = map[42]  # returns int
+            BtfValidationError: If validation finds a mismatch.
         """
-        base_map = self._maps[name]
-        if key_type is None and value_type is None:
-            return base_map
-        # Return a new BpfMap with types set (shares same pointer)
-        return BpfMap(
-            base_map._ptr,
-            self,
-            key_type=key_type,
-            value_type=value_type,
-        )
+        btf = self.btf
+        if btf is None:
+            # No BTF available, just register without validation
+            self._type_registry[btf_name] = python_type
+            return
+
+        lib = bindings._get_lib()
+        type_id = lib.btf__find_by_name_kind(btf, btf_name.encode(), BtfKind.STRUCT)
+
+        if type_id < 0:
+            # Struct not found in BTF - register without validation
+            # This is common when BTF doesn't include all struct names
+            self._type_registry[btf_name] = python_type
+            return
+
+        btf_type = self._resolve_btf_type(type_id)
+        if btf_type is not None:
+            self._validate_python_type(python_type, btf_type, validate_names=True)
+
+        self._type_registry[btf_name] = python_type
+
+    def _resolve_btf_type(self, type_id: int) -> BtfType | None:
+        """Resolve BTF type ID to BtfType, following typedefs.
+
+        Args:
+            type_id: The BTF type ID.
+
+        Returns:
+            BtfType if found, None if type_id is 0 or BTF unavailable.
+        """
+        if type_id == 0:
+            return None
+
+        btf = self.btf
+        if btf is None:
+            return None
+
+        lib = bindings._get_lib()
+
+        # Follow typedefs, const, volatile, restrict modifiers
+        while True:
+            btf_type_ptr = lib.btf__type_by_id(btf, type_id)
+            if not btf_type_ptr:
+                return None
+
+            info = btf_type_ptr.contents.info
+            kind_val = btf_kind(info)
+
+            try:
+                kind = BtfKind(kind_val)
+            except ValueError:
+                kind = BtfKind.UNKN
+
+            # Follow indirections
+            if kind in (BtfKind.TYPEDEF, BtfKind.CONST, BtfKind.VOLATILE, BtfKind.RESTRICT):
+                type_id = btf_type_ptr.contents.size_or_type
+                continue
+
+            # Get type name
+            name_off = btf_type_ptr.contents.name_off
+            name_bytes = lib.btf__str_by_offset(btf, name_off)
+            name = name_bytes.decode("utf-8") if name_bytes else ""
+
+            # Get size (for sized types)
+            size: int | None = None
+            if kind in (BtfKind.INT, BtfKind.STRUCT, BtfKind.UNION, BtfKind.ENUM, BtfKind.FLOAT):
+                size = btf_type_ptr.contents.size_or_type
+
+            # Get fields for struct/union
+            fields: tuple[BtfField, ...] | None = None
+            if kind in (BtfKind.STRUCT, BtfKind.UNION):
+                vlen = btf_vlen(info)
+                if vlen > 0:
+                    fields = self._get_btf_fields(btf, btf_type_ptr, vlen)
+
+            return BtfType(name=name, kind=kind, size=size, fields=fields)
+
+        return None  # unreachable
+
+    def _get_btf_fields(self, btf: Any, btf_type_ptr: Any, vlen: int) -> tuple[BtfField, ...]:
+        """Extract fields from a BTF struct/union type."""
+        lib = bindings._get_lib()
+        fields = []
+
+        # Members follow immediately after btf_type in memory
+        # Each member is 12 bytes (3 x uint32)
+        # Use cast to get the actual pointer address (not a copy)
+        base_addr = ctypes.cast(btf_type_ptr, ctypes.c_void_p).value
+        if base_addr is None:
+            return ()
+        member_base = base_addr + ctypes.sizeof(bindings._btf_type)
+
+        for i in range(vlen):
+            member_addr = member_base + i * ctypes.sizeof(bindings._btf_member)
+            member = bindings._btf_member.from_address(member_addr)
+
+            name_bytes = lib.btf__str_by_offset(btf, member.name_off)
+            field_name = name_bytes.decode("utf-8") if name_bytes else ""
+
+            # Offset is in bits, convert to bytes
+            offset_bytes = member.offset // 8
+
+            # Get field size by resolving its type
+            field_type = self._resolve_btf_type(member.type)
+            field_size = field_type.size if field_type and field_type.size else 0
+
+            fields.append(BtfField(name=field_name, offset=offset_bytes, size=field_size))
+
+        return tuple(fields)
+
+    def _get_btf_struct_names(self) -> list[str]:
+        """Get all struct names in BTF (for error suggestions)."""
+        btf = self.btf
+        if btf is None:
+            return []
+
+        lib = bindings._get_lib()
+        type_cnt = lib.btf__type_cnt(btf)
+        names = []
+
+        for type_id in range(1, type_cnt):
+            btf_type_ptr = lib.btf__type_by_id(btf, type_id)
+            if not btf_type_ptr:
+                continue
+
+            info = btf_type_ptr.contents.info
+            kind_val = btf_kind(info)
+
+            if kind_val == BtfKind.STRUCT:
+                name_off = btf_type_ptr.contents.name_off
+                name_bytes = lib.btf__str_by_offset(btf, name_off)
+                if name_bytes:
+                    name = name_bytes.decode("utf-8")
+                    if name:  # Skip anonymous structs
+                        names.append(name)
+
+        return names
+
+    def _validate_python_type(
+        self, python_type: type, btf_type: BtfType, validate_names: bool
+    ) -> None:
+        """Validate Python type against BTF type."""
+        # Size check
+        if hasattr(python_type, "_fields_") and btf_type.size is not None:
+            py_size = ctypes.sizeof(python_type)
+            if py_size != btf_type.size:
+                raise BtfValidationError(
+                    f"Size mismatch: {python_type.__name__} is {py_size} bytes, "
+                    f"BTF type '{btf_type.name}' is {btf_type.size} bytes"
+                )
+
+        # Field validation for structs
+        if btf_type.fields is not None and hasattr(python_type, "_fields_"):
+            py_fields = python_type._fields_
+
+            # Field count check
+            if len(py_fields) != len(btf_type.fields):
+                raise BtfValidationError(
+                    f"Field count mismatch: {python_type.__name__} has {len(py_fields)} fields, "
+                    f"BTF type '{btf_type.name}' has {len(btf_type.fields)} fields"
+                )
+
+            # Per-field validation
+            for (py_name, _), btf_field in zip(py_fields, btf_type.fields, strict=True):
+                # Offset check
+                py_offset = getattr(python_type, py_name).offset
+                if py_offset != btf_field.offset:
+                    raise BtfValidationError(
+                        f"Field '{py_name}' at offset {py_offset}, "
+                        f"BTF field '{btf_field.name}' expects offset {btf_field.offset}"
+                    )
+
+                # Name check (if enabled)
+                if validate_names and py_name != btf_field.name:
+                    raise BtfValidationError(
+                        f"Field name mismatch: Python field '{py_name}', "
+                        f"BTF field '{btf_field.name}' at offset {btf_field.offset}"
+                    )
 
     def close(self) -> None:
         """Close and release the BPF object resources."""

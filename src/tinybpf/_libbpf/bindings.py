@@ -47,6 +47,35 @@ class _perf_buffer(ctypes.Structure):
     pass
 
 
+class _btf(ctypes.Structure):
+    """Opaque libbpf btf structure."""
+
+    pass
+
+
+class _btf_type(ctypes.Structure):
+    """BTF type structure.
+
+    Layout matches kernel's btf_type structure.
+    """
+
+    _fields_ = [  # noqa: RUF012 (required by ctypes.Structure)
+        ("name_off", ctypes.c_uint32),
+        ("info", ctypes.c_uint32),
+        ("size_or_type", ctypes.c_uint32),
+    ]
+
+
+class _btf_member(ctypes.Structure):
+    """BTF member structure for struct/union fields."""
+
+    _fields_ = [  # noqa: RUF012 (required by ctypes.Structure)
+        ("name_off", ctypes.c_uint32),
+        ("type", ctypes.c_uint32),
+        ("offset", ctypes.c_uint32),
+    ]
+
+
 # Pointer types
 bpf_object_p = ctypes.POINTER(_bpf_object)
 bpf_program_p = ctypes.POINTER(_bpf_program)
@@ -54,6 +83,9 @@ bpf_map_p = ctypes.POINTER(_bpf_map)
 bpf_link_p = ctypes.POINTER(_bpf_link)
 ring_buffer_p = ctypes.POINTER(_ring_buffer)
 perf_buffer_p = ctypes.POINTER(_perf_buffer)
+btf_p = ctypes.POINTER(_btf)
+btf_type_p = ctypes.POINTER(_btf_type)
+btf_member_p = ctypes.POINTER(_btf_member)
 
 # Callback type for ring buffer: int (*)(void *ctx, void *data, size_t size)
 RING_BUFFER_SAMPLE_FN = ctypes.CFUNCTYPE(
@@ -262,6 +294,28 @@ def _setup_function_signatures(lib: ctypes.CDLL) -> None:
 
     lib.perf_buffer__free.argtypes = [perf_buffer_p]
     lib.perf_buffer__free.restype = None
+
+    # BTF functions
+    lib.bpf_object__btf.argtypes = [bpf_object_p]
+    lib.bpf_object__btf.restype = btf_p
+
+    lib.bpf_map__btf_key_type_id.argtypes = [bpf_map_p]
+    lib.bpf_map__btf_key_type_id.restype = ctypes.c_uint32
+
+    lib.bpf_map__btf_value_type_id.argtypes = [bpf_map_p]
+    lib.bpf_map__btf_value_type_id.restype = ctypes.c_uint32
+
+    lib.btf__type_by_id.argtypes = [btf_p, ctypes.c_uint32]
+    lib.btf__type_by_id.restype = btf_type_p
+
+    lib.btf__str_by_offset.argtypes = [btf_p, ctypes.c_uint32]
+    lib.btf__str_by_offset.restype = ctypes.c_char_p
+
+    lib.btf__find_by_name_kind.argtypes = [btf_p, ctypes.c_char_p, ctypes.c_uint32]
+    lib.btf__find_by_name_kind.restype = ctypes.c_int32
+
+    lib.btf__type_cnt.argtypes = [btf_p]
+    lib.btf__type_cnt.restype = ctypes.c_uint32
 
 
 def init(libbpf_path: str | Path | None = None) -> None:

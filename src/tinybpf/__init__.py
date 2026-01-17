@@ -23,6 +23,10 @@ from tinybpf._types import (
     BpfError,
     BpfMapType,
     BpfProgType,
+    BtfField,
+    BtfKind,
+    BtfType,
+    BtfValidationError,
     MapInfo,
     ProgramInfo,
     RingBufferEvent,
@@ -56,11 +60,15 @@ __all__ = [
     "MapInfo",
     "ProgramInfo",
     "RingBufferEvent",
+    "BtfType",
+    "BtfField",
     # Enums
     "BpfMapType",
     "BpfProgType",
+    "BtfKind",
     # Exceptions
     "BpfError",
+    "BtfValidationError",
     # Constants
     "BPF_ANY",
     "BPF_NOEXIST",

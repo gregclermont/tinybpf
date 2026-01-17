@@ -63,7 +63,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/tinybpf/_buffers.py" = ["ARG001", "SIM105"]  # ctypes callbacks have required but unused ctx arg
-"tests/*" = ["ARG001", "ARG002", "ARG005", "PLC0415", "F841", "PTH108"]
+"tests/*" = ["ARG001", "ARG002", "ARG005", "PLC0415", "F841", "PTH108", "RUF012"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["tinybpf"]
