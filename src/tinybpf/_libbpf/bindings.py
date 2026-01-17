@@ -387,13 +387,6 @@ def libbpf_strerror(err: int) -> str:
 
 
 def num_possible_cpus() -> int:
-    """Return the number of possible CPUs on this system."""
+    """Return the number of possible CPUs, or negative errno on failure."""
     lib = _get_lib()
-    ret = lib.libbpf_num_possible_cpus()
-    if ret < 0:
-        err_abs = abs(ret)
-        msg = libbpf_strerror(err_abs)
-        from tinybpf._types import BpfError
-
-        raise BpfError(f"get number of possible CPUs failed: {msg}", errno=err_abs)
-    return ret
+    return lib.libbpf_num_possible_cpus()

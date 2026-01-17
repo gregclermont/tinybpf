@@ -425,6 +425,7 @@ class BpfMap(Generic[KT, VT]):
         lib = bindings._get_lib()
 
         num_cpus = bindings.num_possible_cpus()
+        _check_err(num_cpus, "get number of possible CPUs")
         stride = self._percpu_value_stride()
 
         key_bytes = self._to_key_bytes(key)
