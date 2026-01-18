@@ -73,8 +73,8 @@ class TestKprobeAttachment:
 class TestXdpAttachment:
     """Tests for XDP attachment."""
 
-    def test_attach_xdp(self, xdp_bpf_path: Path) -> None:
-        """Can attach XDP program to loopback interface."""
+    def test_attach_xdp_by_index(self, xdp_bpf_path: Path) -> None:
+        """Can attach XDP program using interface index."""
         import socket
 
         with tinybpf.load(xdp_bpf_path) as obj:
@@ -86,16 +86,78 @@ class TestXdpAttachment:
             link.destroy()
             assert link.fd == -1
 
-    def test_attach_xdp_context_manager(self, xdp_bpf_path: Path) -> None:
-        """XDP link supports context manager protocol."""
-        import socket
-
+    def test_attach_xdp_by_name(self, xdp_bpf_path: Path) -> None:
+        """Can attach XDP program using interface name."""
         with tinybpf.load(xdp_bpf_path) as obj:
             prog = obj.program("xdp_pass")
-            ifindex = socket.if_nametoindex("lo")
-            with prog.attach_xdp(ifindex) as link:
+            link = prog.attach_xdp("lo")
+            assert link.fd >= 0
+            assert "xdp:lo" in repr(link)
+            link.destroy()
+            assert link.fd == -1
+
+    def test_attach_xdp_context_manager(self, xdp_bpf_path: Path) -> None:
+        """XDP link supports context manager protocol."""
+        with tinybpf.load(xdp_bpf_path) as obj:
+            prog = obj.program("xdp_pass")
+            with prog.attach_xdp("lo") as link:
                 assert link.fd >= 0
             assert link.fd == -1
+
+    def test_attach_xdp_invalid_interface(self, xdp_bpf_path: Path) -> None:
+        """Attaching to non-existent interface raises OSError."""
+        with tinybpf.load(xdp_bpf_path) as obj:
+            prog = obj.program("xdp_pass")
+            with pytest.raises(OSError):
+                prog.attach_xdp("nonexistent_interface_xyz")
+
+
+class TestCgroupAttachment:
+    """Tests for cgroup attachment."""
+
+    def test_attach_cgroup_by_path(self, cgroup_bpf_path: Path, current_cgroup_path: str) -> None:
+        """Can attach cgroup program using path."""
+        with tinybpf.load(cgroup_bpf_path) as obj:
+            prog = obj.program("cgroup_skb_egress")
+            link = prog.attach_cgroup(current_cgroup_path)
+            assert link.fd >= 0
+            assert "cgroup:" in repr(link)
+            assert current_cgroup_path in repr(link)
+            link.destroy()
+            assert link.fd == -1
+
+    def test_attach_cgroup_by_fd(self, cgroup_bpf_path: Path, current_cgroup_path: str) -> None:
+        """Can attach cgroup program using file descriptor."""
+        import os
+
+        with tinybpf.load(cgroup_bpf_path) as obj:
+            prog = obj.program("cgroup_skb_egress")
+            cgroup_fd = os.open(current_cgroup_path, os.O_RDONLY)
+            try:
+                link = prog.attach_cgroup(cgroup_fd)
+                assert link.fd >= 0
+                assert "cgroup:fd" in repr(link)
+                link.destroy()
+                assert link.fd == -1
+            finally:
+                os.close(cgroup_fd)
+
+    def test_attach_cgroup_context_manager(
+        self, cgroup_bpf_path: Path, current_cgroup_path: str
+    ) -> None:
+        """Cgroup link supports context manager protocol."""
+        with tinybpf.load(cgroup_bpf_path) as obj:
+            prog = obj.program("cgroup_skb_egress")
+            with prog.attach_cgroup(current_cgroup_path) as link:
+                assert link.fd >= 0
+            assert link.fd == -1
+
+    def test_attach_cgroup_invalid_path(self, cgroup_bpf_path: Path) -> None:
+        """Attaching to non-existent cgroup path raises FileNotFoundError."""
+        with tinybpf.load(cgroup_bpf_path) as obj:
+            prog = obj.program("cgroup_skb_egress")
+            with pytest.raises(FileNotFoundError):
+                prog.attach_cgroup("/sys/fs/cgroup/nonexistent_cgroup_xyz")
 
 
 class TestProgramAttachmentErrors:

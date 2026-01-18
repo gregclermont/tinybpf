@@ -180,6 +180,9 @@ def _setup_function_signatures(lib: ctypes.CDLL) -> None:
     lib.bpf_program__attach_xdp.argtypes = [bpf_program_p, ctypes.c_int]
     lib.bpf_program__attach_xdp.restype = bpf_link_p
 
+    lib.bpf_program__attach_cgroup.argtypes = [bpf_program_p, ctypes.c_int]
+    lib.bpf_program__attach_cgroup.restype = bpf_link_p
+
     # Link operations
     lib.bpf_link__destroy.argtypes = [bpf_link_p]
     lib.bpf_link__destroy.restype = ctypes.c_int

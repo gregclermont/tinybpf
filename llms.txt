@@ -37,8 +37,9 @@ tinybpf.init("/path/to/libbpf.so")
 
 # BpfProgram - attach methods return BpfLink
 # Section names: kprobe/<func>, kretprobe/<func>, tracepoint/<cat>/<name>,
-#   raw_tracepoint/<name>, fentry/<func>, fexit/<func>, xdp, tc, socket
-# Use function name to select programs: obj.programs["xdp_pass"].attach_xdp(ifindex)
+#   raw_tracepoint/<name>, fentry/<func>, fexit/<func>, xdp, tc, socket,
+#   cgroup_skb/ingress, cgroup_skb/egress, cgroup/sock_create, etc.
+# Use function name to select programs: obj.programs["xdp_pass"].attach_xdp("eth0")
 prog.attach()                              # Auto-attach by section (kprobe, tracepoint, etc.)
 prog.attach_kprobe("func", retprobe=False)
 prog.attach_kretprobe("func")
@@ -46,7 +47,8 @@ prog.attach_tracepoint("category", "name")
 prog.attach_raw_tracepoint("name")
 prog.attach_uprobe(binary, offset=0, pid=-1, retprobe=False)
 prog.attach_uretprobe(binary, offset=0, pid=-1)
-prog.attach_xdp(ifindex)  # XDP on network interface (use socket.if_nametoindex)
+prog.attach_xdp("eth0")   # XDP on network interface (name or index)
+prog.attach_cgroup("/sys/fs/cgroup/myapp")  # cgroup program (path or fd)
 prog.name, prog.section, prog.type, prog.fd, prog.info
 
 # BpfMap - dict-like interface

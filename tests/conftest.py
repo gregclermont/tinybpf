@@ -121,3 +121,33 @@ def core_fail_bpf_path() -> Path:
     if not path.exists():
         pytest.skip(f"Compiled BPF program not found: {path}")
     return path
+
+
+@pytest.fixture
+def cgroup_bpf_path() -> Path:
+    """Path to compiled test_cgroup.bpf.o test program.
+
+    Contains programs:
+    - cgroup_skb_egress: cgroup_skb/egress program that allows all traffic
+    """
+    path = BPF_DIR / "test_cgroup.bpf.o"
+    if not path.exists():
+        pytest.skip(f"Compiled BPF program not found: {path}")
+    return path
+
+
+@pytest.fixture
+def current_cgroup_path() -> str:
+    """Get the cgroup path for the current process.
+
+    Reads /proc/self/cgroup to find the cgroup v2 path.
+    Returns the full path under /sys/fs/cgroup.
+    """
+    with Path("/proc/self/cgroup").open() as f:
+        for line in f:
+            # cgroup v2 format: "0::/path"
+            parts = line.strip().split(":")
+            if len(parts) == 3 and parts[0] == "0":
+                cgroup_relative = parts[2]
+                return f"/sys/fs/cgroup{cgroup_relative}"
+    pytest.skip("Could not determine cgroup v2 path for current process")
