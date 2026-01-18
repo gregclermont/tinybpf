@@ -20,11 +20,22 @@ esac
 
 LIBBPF_HEADERS="/opt/libbpf"
 
+# Allow custom vmlinux.h via VMLINUX env var
+if [ -n "$VMLINUX" ]; then
+    if [ ! -f "$VMLINUX" ]; then
+        echo "Error: VMLINUX file not found: $VMLINUX" >&2
+        exit 1
+    fi
+    VMLINUX_INCLUDE="-include $VMLINUX"
+else
+    VMLINUX_INCLUDE="-I$VMLINUX_DIR"
+fi
+
 # Build CFLAGS
 CFLAGS="-g -O2 -target bpf"
 CFLAGS="$CFLAGS -D__TARGET_ARCH_${TARGET_ARCH}"
 CFLAGS="$CFLAGS -I$LIBBPF_HEADERS"
-CFLAGS="$CFLAGS -I$VMLINUX_DIR"
+CFLAGS="$CFLAGS $VMLINUX_INCLUDE"
 
 # Allow extra CFLAGS via environment
 if [ -n "$EXTRA_CFLAGS" ]; then
@@ -40,11 +51,16 @@ if [ $# -eq 0 ]; then
     echo "  -o DIR    Output directory (default: same as source)"
     echo ""
     echo "Environment:"
+    echo "  VMLINUX         Path to custom vmlinux.h (default: bundled kernel 6.18)"
     echo "  EXTRA_CFLAGS    Additional compiler flags"
     echo ""
     echo "Examples:"
     echo "  docker run --rm -v \$(pwd):/src ghcr.io/gregclermont/tinybpf-compile program.bpf.c"
     echo "  docker run --rm -v \$(pwd):/src ghcr.io/gregclermont/tinybpf-compile -o build/ src/*.bpf.c"
+    echo ""
+    echo "  # Use custom vmlinux.h for older kernel:"
+    echo "  docker run --rm -v \$(pwd):/src -v /path/to/vmlinux.h:/vmlinux.h -e VMLINUX=/vmlinux.h \\"
+    echo "    ghcr.io/gregclermont/tinybpf-compile program.bpf.c"
     exit 0
 fi
 

@@ -17,7 +17,22 @@ docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c
 docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile -o build/ src/*.bpf.c
 ```
 
-The image bundles libbpf headers and `vmlinux.h` for CO-RE support. Output `.bpf.o` files are written alongside sources (or to the specified output directory).
+The image bundles libbpf headers and `vmlinux.h` (kernel 6.18) for CO-RE support. Output `.bpf.o` files are written alongside sources (or to the specified output directory).
+
+### Custom vmlinux.h
+
+For targeting older kernels, provide your own vmlinux.h via the `VMLINUX` env var:
+
+```bash
+docker run --rm -v $(pwd):/src -v /path/to/vmlinux.h:/vmlinux.h \
+  -e VMLINUX=/vmlinux.h ghcr.io/gregclermont/tinybpf-compile program.bpf.c
+```
+
+Generate vmlinux.h from a target system:
+
+```bash
+bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+```
 
 ## CO-RE Compatibility
 
