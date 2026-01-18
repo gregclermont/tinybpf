@@ -12,7 +12,6 @@
 
 import ctypes
 import os
-import signal
 import time
 from pathlib import Path
 
@@ -58,48 +57,34 @@ def main() -> None:
             obj.maps["events"], handle_event, event_type=Event
         )
 
-        running = True
-
-        def stop(sig, frame):
-            nonlocal running
-            running = False
-
-        signal.signal(signal.SIGINT, stop)
-
         # Demo: change config over time
         shell_pid = os.getppid()
 
-        print("Phase 1: No filter (all PIDs)")
-        print("-" * 40)
-        config_map[0] = Config(target_pid=0, enabled=0)
+        def poll_for(seconds: float) -> None:
+            """Poll for events for the given duration."""
+            start = time.time()
+            while time.time() - start < seconds:
+                rb.poll(timeout_ms=100)
 
-        start = time.time()
-        while running and time.time() - start < 5:
-            rb.poll(timeout_ms=100)
+        try:
+            print("Phase 1: No filter (all PIDs)")
+            print("-" * 40)
+            config_map[0] = Config(target_pid=0, enabled=0)
+            poll_for(5)
 
-        if not running:
-            return
+            print(f"\nPhase 2: Filter to shell PID {shell_pid}")
+            print("-" * 40)
+            config_map[0] = Config(target_pid=shell_pid, enabled=1)
+            poll_for(5)
 
-        print(f"\nPhase 2: Filter to shell PID {shell_pid}")
-        print("-" * 40)
-        config_map[0] = Config(target_pid=shell_pid, enabled=1)
-
-        start = time.time()
-        while running and time.time() - start < 5:
-            rb.poll(timeout_ms=100)
-
-        if not running:
-            return
-
-        print("\nPhase 3: Filter disabled again")
-        print("-" * 40)
-        config_map[0] = Config(target_pid=0, enabled=0)
-
-        while running:
-            rb.poll(timeout_ms=100)
-
-        print("\nDetaching...")
-        link.destroy()
+            print("\nPhase 3: Filter disabled again")
+            print("-" * 40)
+            config_map[0] = Config(target_pid=0, enabled=0)
+            while True:
+                rb.poll(timeout_ms=100)
+        except KeyboardInterrupt:
+            print("\nDetaching...")
+            link.destroy()
 
 
 if __name__ == "__main__":

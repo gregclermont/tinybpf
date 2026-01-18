@@ -11,7 +11,6 @@
 """Handle multiple event types through one ring buffer using discriminator."""
 
 import ctypes
-import signal
 from pathlib import Path
 from typing import Callable
 
@@ -137,22 +136,15 @@ def main() -> None:
 
         rb = tinybpf.BpfRingBuffer(obj.maps["events"], dispatcher)
 
-        running = True
-
-        def stop(sig, frame):
-            nonlocal running
-            running = False
-
-        signal.signal(signal.SIGINT, stop)
-
         print(f"{'TIME (ms)':>12} EVENT {'PID':<6} INFO")
         print("-" * 50)
-        while running:
-            rb.poll(timeout_ms=100)
-
-        print("\nDetaching...")
-        link_exec.destroy()
-        link_exit.destroy()
+        try:
+            while True:
+                rb.poll(timeout_ms=100)
+        except KeyboardInterrupt:
+            print("\nDetaching...")
+            link_exec.destroy()
+            link_exit.destroy()
 
 
 if __name__ == "__main__":

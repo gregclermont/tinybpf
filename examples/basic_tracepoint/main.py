@@ -11,7 +11,6 @@
 """Trace process execution using tracepoint on sys_enter_execve."""
 
 import ctypes
-import signal
 from pathlib import Path
 
 import tinybpf
@@ -44,23 +43,15 @@ def main() -> None:
             obj.maps["events"], handle_event, event_type=Event
         )
 
-        # Handle Ctrl+C gracefully
-        running = True
-
-        def stop(sig, frame):
-            nonlocal running
-            running = False
-
-        signal.signal(signal.SIGINT, stop)
-
         # Poll for events
         print(f"{'PID':<6} {'UID':<5} COMM")
         print("-" * 30)
-        while running:
-            rb.poll(timeout_ms=100)
-
-        print("\nDetaching...")
-        link.destroy()
+        try:
+            while True:
+                rb.poll(timeout_ms=100)
+        except KeyboardInterrupt:
+            print("\nDetaching...")
+            link.destroy()
 
 
 if __name__ == "__main__":
