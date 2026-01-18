@@ -11,7 +11,6 @@
 """Demonstrate typed events with automatic struct conversion."""
 
 import ctypes
-import signal
 from pathlib import Path
 
 import tinybpf
@@ -56,21 +55,14 @@ def main() -> None:
             obj.maps["events"], handle_event, event_type=ProcessEvent
         )
 
-        running = True
-
-        def stop(sig, frame):
-            nonlocal running
-            running = False
-
-        signal.signal(signal.SIGINT, stop)
-
         print(f"{'TIME (ms)':>12} {'PID':<6} {'TGID':<6} {'UID':<5} {'GID':<5} COMM")
         print("-" * 60)
-        while running:
-            rb.poll(timeout_ms=100)
-
-        print("\nDetaching...")
-        link.destroy()
+        try:
+            while True:
+                rb.poll(timeout_ms=100)
+        except KeyboardInterrupt:
+            print("\nDetaching...")
+            link.destroy()
 
 
 if __name__ == "__main__":

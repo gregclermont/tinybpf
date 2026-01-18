@@ -11,7 +11,6 @@
 """Count packets with XDP and per-CPU maps."""
 
 import ctypes
-import signal
 import socket
 import sys
 import time
@@ -53,14 +52,6 @@ def main() -> None:
         # Get typed stats map
         stats_map = obj.maps["stats"].typed(key=ctypes.c_uint32, value=Stats)
 
-        running = True
-
-        def stop(sig, frame):
-            nonlocal running
-            running = False
-
-        signal.signal(signal.SIGINT, stop)
-
         print(f"{'PACKETS':>12} {'BYTES':>15} {'PPS':>10} {'BPS':>12}")
         print("-" * 55)
 
@@ -68,31 +59,32 @@ def main() -> None:
         prev_bytes = 0
         prev_time = time.time()
 
-        while running:
-            time.sleep(1)
+        try:
+            while True:
+                time.sleep(1)
 
-            # Read per-CPU values and sum them
-            per_cpu_values = stats_map.lookup_percpu(0)
-            if per_cpu_values is None:
-                continue
+                # Read per-CPU values and sum them
+                per_cpu_values = stats_map.lookup_percpu(0)
+                if per_cpu_values is None:
+                    continue
 
-            total_packets = sum(v.packets for v in per_cpu_values)
-            total_bytes = sum(v.bytes for v in per_cpu_values)
+                total_packets = sum(v.packets for v in per_cpu_values)
+                total_bytes = sum(v.bytes for v in per_cpu_values)
 
-            # Calculate rates
-            now = time.time()
-            elapsed = now - prev_time
-            pps = (total_packets - prev_packets) / elapsed
-            bps = (total_bytes - prev_bytes) / elapsed
+                # Calculate rates
+                now = time.time()
+                elapsed = now - prev_time
+                pps = (total_packets - prev_packets) / elapsed
+                bps = (total_bytes - prev_bytes) / elapsed
 
-            print(f"{total_packets:>12} {total_bytes:>15} {pps:>10.1f} {bps:>12.1f}")
+                print(f"{total_packets:>12} {total_bytes:>15} {pps:>10.1f} {bps:>12.1f}")
 
-            prev_packets = total_packets
-            prev_bytes = total_bytes
-            prev_time = now
-
-        print("\nDetaching...")
-        link.destroy()
+                prev_packets = total_packets
+                prev_bytes = total_bytes
+                prev_time = now
+        except KeyboardInterrupt:
+            print("\nDetaching...")
+            link.destroy()
 
 
 if __name__ == "__main__":
