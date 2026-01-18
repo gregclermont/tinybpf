@@ -91,6 +91,8 @@ Section names determine program type and auto-attach behavior:
 | `xdp` | XDP | No, use `attach_xdp()` |
 | `tc` | TC classifier | No |
 | `socket` | socket filter | No |
+| `cgroup_skb/*` | cgroup SKB | No, use `attach_cgroup()` |
+| `cgroup/*` | cgroup sock | No, use `attach_cgroup()` |
 
 Attach methods:
 - `attach()` - Auto-attach based on section name
@@ -100,7 +102,8 @@ Attach methods:
 - `attach_raw_tracepoint(name)`
 - `attach_uprobe(binary_path, offset=0, pid=-1, retprobe=False)`
 - `attach_uretprobe(binary_path, offset=0, pid=-1)`
-- `attach_xdp(ifindex)` - Attach XDP to network interface
+- `attach_xdp(interface)` - Attach XDP to network interface (name or index)
+- `attach_cgroup(cgroup)` - Attach to cgroup (path or fd)
 
 Properties: `name`, `section`, `type`, `fd`, `info`
 

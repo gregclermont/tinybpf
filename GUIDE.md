@@ -254,6 +254,91 @@ rb.add(obj.maps["exit_events"], handle_exit, event_type=ExitEvent)
 
 This avoids manual type discrimination and gives you typed callbacks.
 
+## Cgroup Programs
+
+Cgroup BPF programs attach to cgroups and filter or observe operations for all processes within that cgroup hierarchy.
+
+### Program Types
+
+| Section | Purpose |
+|---------|---------|
+| `cgroup_skb/ingress` | Filter incoming network packets |
+| `cgroup_skb/egress` | Filter outgoing network packets |
+| `cgroup/sock_create` | Filter socket creation |
+| `cgroup/sock_ops` | Observe/modify socket operations |
+| `cgroup/sysctl` | Filter sysctl access |
+| `cgroup/getsockopt`, `cgroup/setsockopt` | Filter socket options |
+
+### Basic Example
+
+```c
+// egress_filter.bpf.c
+#include "vmlinux.h"
+#include <bpf/bpf_helpers.h>
+
+char LICENSE[] SEC("license") = "GPL";
+
+SEC("cgroup_skb/egress")
+int filter_egress(struct __sk_buff *skb)
+{
+    // Return 1 to allow, 0 to drop
+    return 1;
+}
+```
+
+```python
+import tinybpf
+
+with tinybpf.load("egress_filter.bpf.o") as obj:
+    prog = obj.program("filter_egress")
+
+    # Attach to a cgroup - affects all processes in that cgroup
+    link = prog.attach_cgroup("/sys/fs/cgroup/user.slice/myapp")
+
+    # ... program runs until link is destroyed or process exits
+```
+
+### Hierarchy Behavior
+
+Programs attached to parent cgroups also run for all children:
+
+```
+/sys/fs/cgroup/
+├── system.slice/           ← program here affects all services
+│   ├── nginx.service/      ← plus any program attached here
+│   └── postgres.service/
+```
+
+For filtering programs (`cgroup_skb`), if any program in the hierarchy drops a packet, it's dropped. Programs run parent-first, in attachment order.
+
+### Finding Your Cgroup
+
+To attach to the current process's cgroup:
+
+```python
+def get_current_cgroup() -> str:
+    with open("/proc/self/cgroup") as f:
+        for line in f:
+            parts = line.strip().split(":")
+            if parts[0] == "0":  # cgroup v2
+                return f"/sys/fs/cgroup{parts[2]}"
+    raise RuntimeError("cgroup v2 not found")
+
+link = prog.attach_cgroup(get_current_cgroup())
+```
+
+### Inspecting Attached Programs
+
+Use `bpftool` to see what's attached:
+
+```bash
+# Show programs attached to a cgroup
+bpftool cgroup show /sys/fs/cgroup/user.slice/myapp
+
+# Show full cgroup tree with attachments
+bpftool cgroup tree
+```
+
 ## Debugging
 
 ### Reading libbpf Diagnostics

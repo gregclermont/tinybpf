@@ -6,6 +6,8 @@ to various kernel hook points (kprobes, tracepoints, uprobes, etc.).
 
 from __future__ import annotations
 
+import os
+import socket
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -202,24 +204,71 @@ class BpfProgram:
         """
         return self.attach_uprobe(binary_path, offset, pid, retprobe=True)
 
-    def attach_xdp(self, ifindex: int) -> BpfLink:
+    def attach_xdp(self, interface: str | int) -> BpfLink:
         """Attach XDP program to a network interface.
 
         Args:
-            ifindex: Network interface index. Use socket.if_nametoindex("eth0")
-                     to convert an interface name to its index.
+            interface: Network interface name (e.g., "eth0") or index.
 
         Returns:
             A BpfLink that can be used to manage the attachment.
 
         Raises:
             BpfError: If attachment fails.
+            OSError: If interface name cannot be resolved.
+        """
+        self._check_open()
+        if isinstance(interface, str):
+            ifindex = socket.if_nametoindex(interface)
+            description = f"xdp:{interface}"
+        else:
+            ifindex = interface
+            description = f"xdp:if{ifindex}"
+        lib = bindings._get_lib()
+        link = lib.bpf_program__attach_xdp(self._ptr, ifindex)
+        _check_ptr(link, f"attach XDP to interface {interface}")
+        return BpfLink(link, description)
+
+    def attach_cgroup(self, cgroup: str | Path | int) -> BpfLink:
+        """Attach cgroup program to a cgroup.
+
+        Attaches CGROUP_SKB, CGROUP_SOCK, CGROUP_DEVICE, or other cgroup
+        program types. The specific attach type is determined by the program's
+        section name (e.g., "cgroup_skb/ingress", "cgroup/sock_create").
+
+        Uses multi-attach mode, allowing multiple programs to be attached
+        to the same cgroup. Programs run in attachment order; for filtering
+        programs, the packet is dropped if any program drops it.
+
+        Args:
+            cgroup: Cgroup path (e.g., "/sys/fs/cgroup/user.slice/myapp")
+                    or an open file descriptor.
+
+        Returns:
+            A BpfLink that can be used to manage the attachment.
+
+        Raises:
+            BpfError: If attachment fails.
+            FileNotFoundError: If cgroup path does not exist.
         """
         self._check_open()
         lib = bindings._get_lib()
-        link = lib.bpf_program__attach_xdp(self._ptr, ifindex)
-        _check_ptr(link, f"attach XDP to interface {ifindex}")
-        return BpfLink(link, f"xdp:if{ifindex}")
+
+        if isinstance(cgroup, int):
+            # User provided fd directly
+            link = lib.bpf_program__attach_cgroup(self._ptr, cgroup)
+            _check_ptr(link, f"attach cgroup to fd {cgroup}")
+            return BpfLink(link, f"cgroup:fd{cgroup}")
+        else:
+            # Open the cgroup path, attach, then close
+            cgroup_path = str(cgroup)
+            cgroup_fd = os.open(cgroup_path, os.O_RDONLY)
+            try:
+                link = lib.bpf_program__attach_cgroup(self._ptr, cgroup_fd)
+                _check_ptr(link, f"attach cgroup to '{cgroup_path}'")
+                return BpfLink(link, f"cgroup:{cgroup_path}")
+            finally:
+                os.close(cgroup_fd)
 
 
 class ProgramCollection(Mapping[str, BpfProgram]):
