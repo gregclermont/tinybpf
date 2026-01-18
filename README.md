@@ -224,5 +224,5 @@ Use the `ghcr.io/gregclermont/tinybpf-compile` Docker image:
 docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c
 ```
 
-Output files are written alongside sources. The image includes libbpf headers and `vmlinux.h` for CO-RE support.
+Output files are written alongside sources. The image includes libbpf headers and `vmlinux.h` (kernel 6.18) for CO-RE support. See [GUIDE.md](GUIDE.md#custom-vmlinuxh) to use a custom vmlinux.h for older kernels.
 
