@@ -130,6 +130,15 @@ BtfField(name, offset, size)       # dataclass describing a struct field
 BtfKind.INT, STRUCT, UNION, ARRAY, PTR, TYPEDEF, FLOAT, ...  # BTF type kinds
 ```
 
+## Compiling BPF Programs
+
+```bash
+docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile program.bpf.c
+docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile -o build/ src/*.bpf.c
+```
+
+Image includes libbpf headers and vmlinux.h (kernel 6.18, x86_64/aarch64) for CO-RE support. Output `.bpf.o` files are written alongside sources or to specified output directory.
+
 ## Example
 
 ```python

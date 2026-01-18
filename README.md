@@ -6,6 +6,9 @@ Minimal Python library for loading and interacting with compiled eBPF programs.
 - No build dependencies, no runtime dependencies except libelf
 - Dict-like map access, ring buffer streaming, context managers
 
+> [!NOTE]
+> **Using an AI assistant?** Give it [llms.txt](https://raw.githubusercontent.com/gregclermont/tinybpf/main/llms.txt) for accurate API help.
+
 ## Install
 
 ```bash
@@ -223,6 +226,3 @@ docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c
 
 Output files are written alongside sources. The image includes libbpf headers and `vmlinux.h` for CO-RE support.
 
-## For AI Assistants
-
-See [llms.txt](./llms.txt) for a machine-readable API reference.
