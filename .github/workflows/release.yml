@@ -43,22 +43,22 @@ jobs:
               print(f"Error: Invalid version format: {version}")
               sys.exit(1)
 
-          with open('pyproject.toml', 'r') as f:
+          with open('src/tinybpf/__init__.py', 'r') as f:
               content = f.read()
 
-          # Match version = "..." with any quote style
+          # Match __version__ = "..."
           new_content, count = re.subn(
-              r'^version\s*=\s*["\'].*?["\']',
-              f'version = "{version}"',
+              r'^__version__\s*=\s*["\'].*?["\']',
+              f'__version__ = "{version}"',
               content,
               flags=re.MULTILINE
           )
 
           if count == 0:
-              print("Error: Could not find version field in pyproject.toml")
+              print("Error: Could not find __version__ in __init__.py")
               sys.exit(1)
 
-          with open('pyproject.toml', 'w') as f:
+          with open('src/tinybpf/__init__.py', 'w') as f:
               f.write(new_content)
 
           print(f"Updated version to {version}")
