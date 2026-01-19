@@ -88,6 +88,62 @@ jobs:
           name: wheel-${{ matrix.arch }}
           path: dist/*.whl
 
+  build-sdist:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version
+        run: |
+          python3 << 'EOF'
+          import re
+          import sys
+
+          version = "${{ inputs.version }}"
+
+          # Validate version format (basic semver)
+          if not re.match(r'^\d+\.\d+\.\d+(-[\w.]+)?$', version):
+              print(f"Error: Invalid version format: {version}")
+              sys.exit(1)
+
+          with open('pyproject.toml', 'r') as f:
+              content = f.read()
+
+          # Match version = "..." with any quote style
+          new_content, count = re.subn(
+              r'^version\s*=\s*["\'].*?["\']',
+              f'version = "{version}"',
+              content,
+              flags=re.MULTILINE
+          )
+
+          if count == 0:
+              print("Error: Could not find version field in pyproject.toml")
+              sys.exit(1)
+
+          with open('pyproject.toml', 'w') as f:
+              f.write(new_content)
+
+          print(f"Updated version to {version}")
+          EOF
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist
+        run: |
+          pip install build
+          python -m build --sdist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
   test-wheel-x86_64:
     needs: build
     uses: ./.github/workflows/_test-wheel.yml
@@ -105,7 +161,7 @@ jobs:
       wheel-artifact: wheel-aarch64
 
   release:
-    needs: [build, test-wheel-x86_64, test-wheel-aarch64]
+    needs: [build, build-sdist, test-wheel-x86_64, test-wheel-aarch64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -114,9 +170,15 @@ jobs:
       - name: Download all wheel artifacts
         uses: actions/download-artifact@v4
         with:
-          path: wheels
+          path: dist
           pattern: wheel-*
           merge-multiple: true
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -137,7 +199,9 @@ jobs:
             # index-url = "https://gregclermont.github.io/tinybpf/"
             # ///
             ```
-          files: wheels/*.whl
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
 
   update-index:
     needs: release
@@ -166,9 +230,9 @@ jobs:
           <body>
           HTMLEOF
 
-          # Fetch all wheel URLs from releases and add to index
+          # Fetch all wheel and sdist URLs from releases and add to index
           gh release list --json tagName --jq '.[].tagName' | grep '^v' | while read tag; do
-            gh release view "$tag" --json assets --jq '.assets[].url' | grep '\.whl$' | while read url; do
+            gh release view "$tag" --json assets --jq '.assets[].url' | grep -E '\.(whl|tar\.gz)$' | while read url; do
               filename=$(basename "$url")
               echo "<a href=\"$url\">$filename</a>" >> tinybpf/index.html
             done
