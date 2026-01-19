@@ -19,7 +19,14 @@ jobs:
       - name: Get version from __init__.py
         id: get-version
         run: |
-          version=$(python3 -c "import re; print(re.search(r'__version__\s*=\s*[\"'\''](.*?)[\"'\'']', open('src/tinybpf/__init__.py').read()).group(1))")
+          version=$(python3 << 'EOF'
+          import re
+          with open('src/tinybpf/__init__.py') as f:
+              content = f.read()
+          match = re.search(r'__version__\s*=\s*["\'](.+?)["\']', content)
+          print(match.group(1))
+          EOF
+          )
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Detected version: $version"
 
