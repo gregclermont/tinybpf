@@ -27,7 +27,7 @@ setup-linux:
 	@test -f $(PROJECT_DIR)/src/tinybpf/_libbpf/libbpf.so.1 || \
 		(echo "Downloading libbpf..." && \
 		mkdir -p src/tinybpf/_libbpf && \
-		curl -sL https://github.com/gregclermont/tinybpf/releases/download/libbpf-v$$(cat .libbpf-version)/libbpf-$(ARCH).tar.gz | \
+		curl -sL https://github.com/gregclermont/tinybpf/releases/download/libbpf-v$$(cat src/tinybpf/.libbpf-version)/libbpf-$(ARCH).tar.gz | \
 		tar xz -C src/tinybpf/_libbpf/)
 
 test-linux: compile setup-linux
