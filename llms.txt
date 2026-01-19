@@ -1,15 +1,22 @@
 # tinybpf
 
-Minimal Python library for loading pre-compiled CO-RE eBPF programs. Uses ctypes bindings to bundled libbpf.
+Minimal Python library for loading compiled eBPF programs. Uses ctypes bindings to bundled libbpf.
 
 ## Install
 
 ```bash
-uv add tinybpf --extra-index-url https://gregclermont.github.io/tinybpf/
-pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf/
+uv add tinybpf --index https://gregclermont.github.io/tinybpf
+pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf
 ```
 
-Requires Linux 5.8+, libelf, root/CAP_BPF. Wheels: manylinux_2_28 x86_64/aarch64.
+Requires Linux 5.8+ (for ring buffers; basic features work on older kernels), libelf, root/CAP_BPF. Wheels: manylinux_2_28 x86_64/aarch64.
+
+## Detailed Docs
+
+For detailed docstrings on any function/method:
+```bash
+python -m pydoc tinybpf.BpfProgram.attach_cgroup
+```
 
 ## API
 
@@ -18,20 +25,39 @@ import tinybpf
 
 # Load eBPF object file
 with tinybpf.load("program.bpf.o") as obj:
-    # Access programs and maps
     obj.programs  # Dict-like: ProgramCollection
     obj.maps      # Dict-like: MapCollection
     obj.program("name")  # -> BpfProgram
-    obj.map("name")      # -> BpfMap
+
+# Type registration - register Python types for BTF validation
+obj.register_type("event", Event)  # validate and register ctypes.Structure
+obj.register_type("event", Event, validate_field_names=False)  # skip field name check
+obj.lookup_type("event")           # -> registered type or None
+obj.lookup_btf_name(Event)         # -> BTF name or None
+
+# Open pinned map from bpffs
+with tinybpf.open_pinned_map("/sys/fs/bpf/my_map") as map:
+    ...
+
+# Optional: use custom libbpf.so (call before other functions)
+tinybpf.init("/path/to/libbpf.so")
 
 # BpfProgram - attach methods return BpfLink
-prog.attach()                              # Auto-attach by section
-prog.attach_kprobe("func", retprobe=False)
-prog.attach_kretprobe("func")
-prog.attach_tracepoint("category", "name")
-prog.attach_raw_tracepoint("name")
-prog.attach_uprobe(binary, offset=0, pid=-1, retprobe=False)
-prog.attach_uretprobe(binary, offset=0, pid=-1)
+# IMPORTANT: Store the returned link! If discarded, the program detaches when GC'd.
+#   link = prog.attach_kprobe("func")       # correct - store the link
+#   with prog.attach_kprobe("func") as link: ...  # or use context manager
+# Section names: kprobe/<func>, kretprobe/<func>, tracepoint/<cat>/<name>,
+#   raw_tracepoint/<name>, fentry/<func>, fexit/<func>, xdp, tc, socket,
+#   cgroup_skb/ingress, cgroup_skb/egress, cgroup/sock_create, etc.
+link = prog.attach()                       # Auto-attach by section (kprobe, tracepoint, etc.)
+link = prog.attach_kprobe("func", retprobe=False)
+link = prog.attach_kretprobe("func")
+link = prog.attach_tracepoint("category", "name")
+link = prog.attach_raw_tracepoint("name")
+link = prog.attach_uprobe(binary, offset=0, pid=-1, retprobe=False)
+link = prog.attach_uretprobe(binary, offset=0, pid=-1)
+link = prog.attach_xdp("eth0")             # XDP on network interface (name or index)
+link = prog.attach_cgroup("/sys/fs/cgroup/myapp")  # cgroup program (path or fd)
 prog.name, prog.section, prog.type, prog.fd, prog.info
 
 # BpfMap - dict-like interface
@@ -40,15 +66,61 @@ value = map[key]    # lookup (KeyError if missing)
 del map[key]        # delete
 key in map          # contains
 map.lookup(key)     # -> value or None
+map.get(key, default=None)  # -> value or default
 map.update(key, value, flags=BPF_ANY)  # flags: BPF_ANY|BPF_NOEXIST|BPF_EXIST
 map.delete(key)     # -> bool
 map.keys(), map.values(), map.items()  # iterators
+map.pin("/sys/fs/bpf/path")   # pin to bpffs (object-owned maps only)
+map.unpin("/sys/fs/bpf/path") # remove pin
 map.name, map.type, map.key_size, map.value_size, map.max_entries, map.fd, map.info
+map.is_standalone   # True if opened from pinned path
 
-# Keys/values: bytes, int, or ctypes.Structure
+# Typed access - int/float auto-convert when BTF metadata is available
+# Use .typed() for ctypes.Structure or explicit BTF validation
+map.typed(value=Event)         # -> BpfMap[Any, Event] for ctypes.Structure
+map.typed(key=int, value=int, validate_field_names=True)  # explicit validation
+# Common patterns with .typed()
+config_map = map.typed(key=int, value=Config)
+config_map[0] = Config(field=value)   # single-entry array map pattern
+stats_map = map.typed(key=int, value=StatsStruct)
+for key, stats in stats_map.items():  # iterate with typed keys and values
+    print(key, stats.field)
+map.btf_key   # -> BtfType or None (BTF type info for key)
+map.btf_value # -> BtfType or None (BTF type info for value)
 
-# BpfLink
-link.destroy()  # detach program
+# Keys/values: bytes, int, float (auto via BTF), or ctypes.Structure
+
+# BpfRingBuffer - stream events from BPF_MAP_TYPE_RINGBUF
+rb = BpfRingBuffer(map, callback=lambda data: ...)  # callback receives bytes
+rb = BpfRingBuffer(map, callback, event_type=Event)  # callback receives Event (no from_buffer_copy needed)
+rb = BpfRingBuffer(map, callback, event_type=Event, validate_btf_struct="event")  # BTF validation
+rb = BpfRingBuffer()  # empty, then rb.add(map, callback) for multi-map
+rb.add(map, callback, event_type=Event)  # add map with typed events
+rb.poll(timeout_ms=-1)    # poll and invoke callbacks, returns event count
+rb.consume()              # process available events without waiting
+rb.epoll_fd()             # epoll fd for custom event loop integration
+rb.fileno()               # alias for epoll_fd() (file-like protocol)
+await rb.poll_async()     # async polling
+async for event in rb     # async iteration (type depends on event_type)
+for event in rb           # sync iteration after poll() (type depends on event_type)
+rb.events()               # async iterator yielding RingBufferEvent[T] with .map_name, .data
+# Note: iterator mode requires same event_type for all maps; use callback mode for different types per map
+# Multiple event types in single buffer: put discriminator at consistent offset in all C structs
+#   event_type = data[8]  # read discriminator at known offset
+#   if event_type == X and len(data) >= ctypes.sizeof(EventX): event = EventX.from_buffer_copy(data)
+# Alternative: use multi-map with typed callbacks (simpler, no manual discrimination)
+#   rb.add(obj.maps["exec_events"], handle_exec, event_type=ExecEvent)
+#   rb.add(obj.maps["exit_events"], handle_exit, event_type=ExitEvent)
+
+# BpfPerfBuffer - stream events from BPF_MAP_TYPE_PERF_EVENT_ARRAY
+pb = BpfPerfBuffer(map, sample_callback=lambda cpu, data: ..., lost_callback=None)
+pb = BpfPerfBuffer(map, sample_callback, event_type=Event)  # callback receives (cpu, Event)
+pb = BpfPerfBuffer(map, sample_callback, event_type=Event, validate_btf_struct="event")  # BTF validation
+pb.poll(timeout_ms=-1)    # poll and invoke callbacks
+pb.consume()              # process available events without waiting
+
+# BpfLink - keeps program attached; destroy() or GC detaches
+link.destroy()  # explicitly detach program
 link.fd
 
 # Versions
@@ -56,12 +128,27 @@ tinybpf.version()         # package version
 tinybpf.libbpf_version()  # bundled libbpf version
 
 # Types
-BpfObject, BpfProgram, BpfMap, BpfLink
-BpfMapType, BpfProgType  # IntEnums
-MapInfo, ProgramInfo     # dataclasses
-BpfError                 # exception with .errno
+BpfObject, BpfProgram, BpfMap, BpfLink, BpfRingBuffer, BpfPerfBuffer
+BpfMapType, BpfProgType, BtfKind  # IntEnums
+MapInfo, ProgramInfo, RingBufferEvent, BtfType, BtfField  # dataclasses
+BpfError  # exception with .errno, .libbpf_log (CO-RE/verifier diagnostics)
+BtfValidationError  # exception with .errno
 BPF_ANY, BPF_NOEXIST, BPF_EXIST  # map update flags
+
+# BTF type introspection
+BtfType(name, kind, size, fields)  # dataclass describing a BTF type
+BtfField(name, offset, size)       # dataclass describing a struct field
+BtfKind.INT, STRUCT, UNION, ARRAY, PTR, TYPEDEF, FLOAT, ...  # BTF type kinds
 ```
+
+## Compiling BPF Programs
+
+```bash
+tinybpf docker-compile program.bpf.c
+tinybpf docker-compile -o build/ src/*.bpf.c
+```
+
+Uses a Docker image with libbpf headers and vmlinux.h (kernel 6.18, x86_64/aarch64) for CO-RE support. Output `.bpf.o` files are written alongside sources or to specified output directory.
 
 ## Example
 
@@ -75,7 +162,8 @@ class Event(ctypes.Structure):
 with tinybpf.load("trace.bpf.o") as obj:
     link = obj.program("trace_exec").attach_kprobe("do_execve")
     # ... wait for events ...
-    for key, event in obj.maps["events"].items():
+    events = obj.maps["events"].typed(value=Event)
+    for key, event in events.items():
         print(f"PID {event.pid}: {event.comm.decode()}")
 ```
 
@@ -83,10 +171,13 @@ with tinybpf.load("trace.bpf.o") as obj:
 
 - `BpfError: open failed: No such file or directory` - .bpf.o file not found
 - `BpfError: load failed: Operation not permitted` - need root or CAP_BPF
+- `BpfError: load failed: ...` with libbpf_log mentioning "CO-RE relocation" - struct field doesn't exist on target kernel; check e.libbpf_log for details
 - `BpfError: attach kprobe failed: No such file or directory` - kernel function doesn't exist
+- `BtfValidationError: Size mismatch` - Python struct size doesn't match BTF
 - `KeyError` - program/map name not in object, or map key not found
 
 ## Links
 
 - GitHub: https://github.com/gregclermont/tinybpf
-- Package index: https://gregclermont.github.io/tinybpf/
+- Package index: https://gregclermont.github.io/tinybpf
+- BPF development guide: https://github.com/gregclermont/tinybpf/blob/main/GUIDE.md (CO-RE, struct layouts, debugging)
