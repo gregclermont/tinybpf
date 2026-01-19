@@ -22,6 +22,9 @@ classifiers = [
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "mypy", "ruff", "pre-commit"]
 
+[project.scripts]
+tinybpf = "tinybpf._cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -30,7 +33,7 @@ include-package-data = false
 
 [tool.setuptools.package-data]
 "tinybpf._libbpf" = ["*.so*"]
-"tinybpf" = ["py.typed"]
+"tinybpf" = ["py.typed", ".libbpf-version", ".vmlinux-version"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
