@@ -286,9 +286,12 @@ gh workflow run build-compile-image.yml
 
 ### Creating a Release
 
+The version is read from `src/tinybpf/__init__.py`. To release:
+
 ```bash
-# Trigger release workflow (builds, tests, publishes)
-gh workflow run release.yml -f version=0.2.0
+# 1. Update __version__ in src/tinybpf/__init__.py, commit, and push
+# 2. Trigger release workflow (reads version from repo)
+gh workflow run release.yml
 
 # Watch progress (builds wheels, tests on all Python versions + both archs, creates release)
 gh run watch
@@ -300,14 +303,15 @@ gh release view v0.2.0
 | | |
 |---|---|
 | **Trigger** | Manual only |
-| **Input** | `version` (required, e.g., "0.2.0") |
+| **Input** | None (version read from `__init__.py`) |
 | **Produces** | GitHub release `v{version}` with wheels, updated gh-pages index |
 
 **Flow:**
-1. **build** (x86_64 + aarch64): Download libbpf, build platform-specific wheels
-2. **test-wheel** (x86_64 + aarch64): Test wheels on Python 3.10-3.12
-3. **release**: Create GitHub release with wheel assets
-4. **update-index**: Update `gh-pages` branch with pip-compatible index
+1. **prepare**: Read version from `__init__.py`, validate format, check release doesn't exist
+2. **build** (x86_64 + aarch64): Download libbpf, build platform-specific wheels
+3. **test-wheel** (x86_64 + aarch64): Test wheels on Python 3.10-3.12
+4. **release**: Create GitHub release with wheel assets
+5. **update-index**: Update `gh-pages` branch with pip-compatible index
 
 ### End-to-End Testing
 
@@ -352,11 +356,15 @@ git push  # → triggers ci.yml
 **Creating a release:**
 
 ```bash
-# 1. Run release workflow
-gh workflow run release.yml -f version=0.2.0
+# 1. Update version in __init__.py, commit, and push
+vim src/tinybpf/__init__.py  # update __version__
+git add src/tinybpf/__init__.py && git commit -m "Bump version to 0.2.0" && git push
+
+# 2. Run release workflow (reads version from repo)
+gh workflow run release.yml
 gh run watch  # wait for completion
 
-# 2. Verify the release
+# 3. Verify the release
 gh workflow run e2e-test.yml -f version=0.2.0
 gh run watch
 ```
