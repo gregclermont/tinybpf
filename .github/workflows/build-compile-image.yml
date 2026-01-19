@@ -5,7 +5,8 @@ on:
     branches: [main]
     paths:
       - 'docker/**'
-      - '.libbpf-version'
+      - 'src/tinybpf/.libbpf-version'
+      - 'src/tinybpf/.vmlinux-version'
       - '.github/workflows/build-compile-image.yml'
   workflow_dispatch:
     inputs:
@@ -29,9 +30,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read libbpf version
-        id: libbpf
-        run: echo "version=$(cat .libbpf-version)" >> $GITHUB_OUTPUT
+      - name: Read versions
+        id: versions
+        run: |
+          echo "libbpf=$(cat src/tinybpf/.libbpf-version)" >> $GITHUB_OUTPUT
+          echo "vmlinux=$(cat src/tinybpf/.vmlinux-version)" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -54,7 +57,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=libbpf-${{ steps.libbpf.outputs.version }}
+            type=raw,value=libbpf-${{ steps.versions.outputs.libbpf }}
             type=sha,prefix=
 
       - name: Build and push
@@ -66,6 +69,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            LIBBPF_VERSION=${{ steps.libbpf.outputs.version }}
+            LIBBPF_VERSION=${{ steps.versions.outputs.libbpf }}
+            VMLINUX_VERSION=${{ steps.versions.outputs.vmlinux }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

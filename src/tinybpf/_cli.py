@@ -10,20 +10,10 @@ from tinybpf import __version__
 
 
 def _get_version_file(filename: str) -> str | None:
-    """Read a version file from the package directory or repo root."""
-    pkg_dir = Path(__file__).parent
-
-    # Try package directory first (installed package has these files)
-    pkg_file = pkg_dir / filename
+    """Read a version file from the package directory."""
+    pkg_file = Path(__file__).parent / filename
     if pkg_file.exists():
         return pkg_file.read_text().strip()
-
-    # Fall back to repo root (editable install / development)
-    repo_root = pkg_dir.parent.parent.parent
-    root_file = repo_root / filename
-    if root_file.exists():
-        return root_file.read_text().strip()
-
     return None
 
 

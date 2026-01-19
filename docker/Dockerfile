@@ -5,6 +5,7 @@
 FROM debian:bookworm-slim
 
 ARG LIBBPF_VERSION=1.4.0
+ARG VMLINUX_VERSION=6.18
 
 # Install clang and minimal dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,9 +21,9 @@ RUN mkdir -p /opt/libbpf/bpf && \
 
 # Download vmlinux.h for x86_64 and aarch64
 RUN mkdir -p /opt/vmlinux/x86_64 /opt/vmlinux/aarch64 && \
-    curl -sL "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86/vmlinux_6.18.h" \
+    curl -sL "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86/vmlinux_${VMLINUX_VERSION}.h" \
         -o /opt/vmlinux/x86_64/vmlinux.h && \
-    curl -sL "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/aarch64/vmlinux_6.18.h" \
+    curl -sL "https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/aarch64/vmlinux_${VMLINUX_VERSION}.h" \
         -o /opt/vmlinux/aarch64/vmlinux.h
 
 COPY entrypoint.sh /entrypoint.sh

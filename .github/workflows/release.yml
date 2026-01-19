@@ -23,7 +23,7 @@ jobs:
 
       - name: Download libbpf
         run: |
-          gh release download libbpf-v$(cat .libbpf-version) \
+          gh release download libbpf-v$(cat src/tinybpf/.libbpf-version) \
             --pattern "libbpf-${{ matrix.arch }}.tar.gz"
           mkdir -p src/tinybpf/_libbpf
           tar xzf libbpf-${{ matrix.arch }}.tar.gz -C src/tinybpf/_libbpf/
