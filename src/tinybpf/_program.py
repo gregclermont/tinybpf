@@ -74,7 +74,8 @@ class BpfProgram:
         """Auto-attach based on program type and section name.
 
         Returns:
-            A BpfLink that can be used to manage the attachment.
+            A BpfLink that must be stored or used as a context manager.
+            If discarded, the program will be detached when garbage collected.
 
         Raises:
             BpfError: If attachment fails.
@@ -93,7 +94,8 @@ class BpfProgram:
             retprobe: If True, attach to function return instead of entry.
 
         Returns:
-            A BpfLink that can be used to manage the attachment.
+            A BpfLink that must be stored or used as a context manager.
+            If discarded, the program will be detached when garbage collected.
 
         Raises:
             BpfError: If attachment fails.
@@ -112,7 +114,8 @@ class BpfProgram:
             func_name: Kernel function name to probe.
 
         Returns:
-            A BpfLink that can be used to manage the attachment.
+            A BpfLink that must be stored or used as a context manager.
+            If discarded, the program will be detached when garbage collected.
 
         Raises:
             BpfError: If attachment fails.
@@ -127,7 +130,8 @@ class BpfProgram:
             name: Tracepoint name (e.g., "sys_enter_openat").
 
         Returns:
-            A BpfLink that can be used to manage the attachment.
+            A BpfLink that must be stored or used as a context manager.
+            If discarded, the program will be detached when garbage collected.
 
         Raises:
             BpfError: If attachment fails.
@@ -147,7 +151,8 @@ class BpfProgram:
             name: Raw tracepoint name.
 
         Returns:
-            A BpfLink that can be used to manage the attachment.
+            A BpfLink that must be stored or used as a context manager.
+            If discarded, the program will be detached when garbage collected.
 
         Raises:
             BpfError: If attachment fails.
@@ -174,7 +179,8 @@ class BpfProgram:
             retprobe: If True, attach to function return instead of entry.
 
         Returns:
-            A BpfLink that can be used to manage the attachment.
+            A BpfLink that must be stored or used as a context manager.
+            If discarded, the program will be detached when garbage collected.
 
         Raises:
             BpfError: If attachment fails.
@@ -197,7 +203,8 @@ class BpfProgram:
             pid: Process ID to attach to (-1 for all processes).
 
         Returns:
-            A BpfLink that can be used to manage the attachment.
+            A BpfLink that must be stored or used as a context manager.
+            If discarded, the program will be detached when garbage collected.
 
         Raises:
             BpfError: If attachment fails.
@@ -211,7 +218,8 @@ class BpfProgram:
             interface: Network interface name (e.g., "eth0") or index.
 
         Returns:
-            A BpfLink that can be used to manage the attachment.
+            A BpfLink that must be stored or used as a context manager.
+            If discarded, the program will be detached when garbage collected.
 
         Raises:
             BpfError: If attachment fails.
@@ -245,7 +253,8 @@ class BpfProgram:
                     or an open file descriptor.
 
         Returns:
-            A BpfLink that can be used to manage the attachment.
+            A BpfLink that must be stored or used as a context manager.
+            If discarded, the program will be detached when garbage collected.
 
         Raises:
             BpfError: If attachment fails.

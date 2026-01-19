@@ -7,6 +7,8 @@ closed or garbage collected.
 
 from __future__ import annotations
 
+import time
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from tinybpf._libbpf import bindings
@@ -26,6 +28,7 @@ class BpfLink:
         self._ptr = link_ptr
         self._description = description
         self._destroyed = False
+        self._created_at = time.monotonic()
 
     def __enter__(self) -> BpfLink:
         return self
@@ -40,6 +43,15 @@ class BpfLink:
 
     def __del__(self) -> None:
         if not self._destroyed:
+            elapsed = time.monotonic() - self._created_at
+            if elapsed < 0.1:
+                warnings.warn(
+                    f"BpfLink destroyed immediately after creation ({self._description}). "
+                    "The BPF program has been detached. To keep it attached, either:\n"
+                    "  - Store the link: link = prog.attach_*()\n"
+                    "  - Use a context manager: with prog.attach_*() as link:",
+                    stacklevel=2,
+                )
             self.destroy()
 
     def __repr__(self) -> str:

@@ -36,19 +36,21 @@ with tinybpf.open_pinned_map("/sys/fs/bpf/my_map") as map:
 tinybpf.init("/path/to/libbpf.so")
 
 # BpfProgram - attach methods return BpfLink
+# IMPORTANT: Store the returned link! If discarded, the program detaches when GC'd.
+#   link = prog.attach_kprobe("func")       # correct - store the link
+#   with prog.attach_kprobe("func") as link: ...  # or use context manager
 # Section names: kprobe/<func>, kretprobe/<func>, tracepoint/<cat>/<name>,
 #   raw_tracepoint/<name>, fentry/<func>, fexit/<func>, xdp, tc, socket,
 #   cgroup_skb/ingress, cgroup_skb/egress, cgroup/sock_create, etc.
-# Use function name to select programs: obj.programs["xdp_pass"].attach_xdp("eth0")
-prog.attach()                              # Auto-attach by section (kprobe, tracepoint, etc.)
-prog.attach_kprobe("func", retprobe=False)
-prog.attach_kretprobe("func")
-prog.attach_tracepoint("category", "name")
-prog.attach_raw_tracepoint("name")
-prog.attach_uprobe(binary, offset=0, pid=-1, retprobe=False)
-prog.attach_uretprobe(binary, offset=0, pid=-1)
-prog.attach_xdp("eth0")   # XDP on network interface (name or index)
-prog.attach_cgroup("/sys/fs/cgroup/myapp")  # cgroup program (path or fd)
+link = prog.attach()                       # Auto-attach by section (kprobe, tracepoint, etc.)
+link = prog.attach_kprobe("func", retprobe=False)
+link = prog.attach_kretprobe("func")
+link = prog.attach_tracepoint("category", "name")
+link = prog.attach_raw_tracepoint("name")
+link = prog.attach_uprobe(binary, offset=0, pid=-1, retprobe=False)
+link = prog.attach_uretprobe(binary, offset=0, pid=-1)
+link = prog.attach_xdp("eth0")             # XDP on network interface (name or index)
+link = prog.attach_cgroup("/sys/fs/cgroup/myapp")  # cgroup program (path or fd)
 prog.name, prog.section, prog.type, prog.fd, prog.info
 
 # BpfMap - dict-like interface
@@ -110,8 +112,8 @@ pb = BpfPerfBuffer(map, sample_callback, event_type=Event, validate_btf_struct="
 pb.poll(timeout_ms=-1)    # poll and invoke callbacks
 pb.consume()              # process available events without waiting
 
-# BpfLink
-link.destroy()  # detach program
+# BpfLink - keeps program attached; destroy() or GC detaches
+link.destroy()  # explicitly detach program
 link.fd
 
 # Versions
