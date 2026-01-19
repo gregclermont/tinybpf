@@ -25,6 +25,33 @@ pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf
 
 Wheels available for `manylinux_2_28_x86_64` and `manylinux_2_28_aarch64`.
 
+<details>
+<summary>Using system libbpf</summary>
+
+To use your system's libbpf instead of the bundled version:
+
+```bash
+# Install system libbpf
+apt install libbpf-dev  # Debian/Ubuntu
+dnf install libbpf-devel  # Fedora/RHEL
+
+# Install from source distribution (no bundled libbpf)
+uv add tinybpf --index https://gregclermont.github.io/tinybpf --no-binary tinybpf
+# or: pip install --no-binary tinybpf tinybpf --extra-index-url https://gregclermont.github.io/tinybpf
+```
+
+Then initialize with the system library path before using tinybpf:
+
+```python
+import tinybpf
+
+tinybpf.init("/usr/lib/x86_64-linux-gnu/libbpf.so.1")  # Debian/Ubuntu
+# tinybpf.init("/usr/lib64/libbpf.so.1")  # Fedora/RHEL
+```
+
+Requires libbpf 1.0+.
+</details>
+
 ## Usage
 
 ```python
