@@ -327,7 +327,10 @@ class BpfMap(Generic[KT, VT]):
                 return int.from_bytes(data, byteorder="little")  # type: ignore
             if issubclass(self._key_type, ctypes.Structure):
                 return self._key_type.from_buffer_copy(data)
-            return data  # type: ignore
+            raise TypeError(
+                f"typed() key must be int or ctypes.Structure, not {self._key_type.__name__}. "
+                f"Use int for scalar types."
+            )
 
         # No explicit type - check BTF for auto-inference
         btf_type = self.btf_key
@@ -349,7 +352,10 @@ class BpfMap(Generic[KT, VT]):
                 return int.from_bytes(data, byteorder="little")  # type: ignore
             if issubclass(self._value_type, ctypes.Structure):
                 return self._value_type.from_buffer_copy(data)
-            return data  # type: ignore
+            raise TypeError(
+                f"typed() value must be int or ctypes.Structure, not {self._value_type.__name__}. "
+                f"Use int for scalar types."
+            )
 
         # No explicit type - check BTF for auto-inference
         btf_type = self.btf_value
