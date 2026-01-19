@@ -6,6 +6,7 @@ import ctypes
 import ctypes.util
 import fcntl
 import os
+import sys
 import threading
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -362,6 +363,13 @@ def init(libbpf_path: str | Path | None = None) -> None:
 
 def _load_bundled() -> ctypes.CDLL:
     """Load bundled libbpf.so from package directory."""
+    if sys.platform != "linux":
+        raise OSError(
+            f"tinybpf requires Linux (current platform: {sys.platform}). "
+            "The package can be imported on other platforms for type checking, "
+            "but BPF operations require a Linux system."
+        )
+
     pkg_dir = Path(__file__).parent
     for name in ["libbpf.so.1", "libbpf.so"]:
         path = pkg_dir / name
@@ -370,7 +378,10 @@ def _load_bundled() -> ctypes.CDLL:
 
     raise OSError(
         "Bundled libbpf.so not found. "
-        "Use a wheel with bundled library or call init(libbpf_path='...')."
+        "If you installed from source, use system libbpf:\n"
+        "  1. Install: apt install libbpf-dev  # or equivalent\n"
+        "  2. Initialize: tinybpf.init('/usr/lib/x86_64-linux-gnu/libbpf.so.1')\n"
+        "Or install a wheel: pip install --only-binary :all: tinybpf"
     )
 
 
