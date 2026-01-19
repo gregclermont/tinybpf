@@ -1,11 +1,12 @@
 # eBPF CO-RE compilation image
-# Build: docker build -t ghcr.io/gregclermont/tinybpf-compile docker/
+# Build: docker build --build-arg LIBBPF_VERSION=1.4.0 --build-arg VMLINUX_VERSION=6.18 -t ghcr.io/gregclermont/tinybpf-compile docker/
 # Usage: docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile program.bpf.c
+# Versions are read from src/tinybpf/.libbpf-version and src/tinybpf/.vmlinux-version by CI
 
 FROM debian:bookworm-slim
 
-ARG LIBBPF_VERSION=1.4.0
-ARG VMLINUX_VERSION=6.18
+ARG LIBBPF_VERSION
+ARG VMLINUX_VERSION
 
 # Install clang and minimal dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
