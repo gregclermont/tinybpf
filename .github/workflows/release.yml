@@ -48,6 +48,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  build-ebpf:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test eBPF programs
+        run: make compile
+
+      - name: Upload eBPF objects
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-ebpf-objects
+          path: tests/bpf/*.bpf.o
+
   build:
     needs: prepare
     runs-on: ubuntu-latest
@@ -92,7 +107,7 @@ jobs:
           path: dist/*.whl
 
   test-wheel-x86_64:
-    needs: build
+    needs: [build, build-ebpf]
     uses: ./.github/workflows/_test-wheel.yml
     with:
       python-versions: '["3.10", "3.11", "3.12"]'
@@ -100,7 +115,7 @@ jobs:
       wheel-artifact: wheel-x86_64
 
   test-wheel-aarch64:
-    needs: build
+    needs: [build, build-ebpf]
     uses: ./.github/workflows/_test-wheel.yml
     with:
       python-versions: '["3.10", "3.11", "3.12"]'
