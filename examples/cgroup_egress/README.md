@@ -16,7 +16,7 @@ Counts outgoing network packets for processes in a cgroup using a `cgroup_skb/eg
 ## Run
 
 ```bash
-make compile  # from repo root
+tinybpf docker-compile egress_filter.bpf.c
 sudo $(which uv) run main.py
 ```
 
