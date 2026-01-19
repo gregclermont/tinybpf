@@ -4,9 +4,13 @@ import tinybpf
 
 
 def test_package_version() -> None:
-    """Package version is accessible."""
-    assert tinybpf.version() == "0.0.1"
-    assert tinybpf.__version__ == "0.0.1"
+    """Package version is accessible and has valid format."""
+    version = tinybpf.version()
+    assert version == tinybpf.__version__
+    # Verify semver format (X.Y.Z with optional prerelease)
+    parts = version.split("-")[0].split(".")
+    assert len(parts) == 3
+    assert all(p.isdigit() for p in parts)
 
 
 def test_libbpf_version() -> None:
