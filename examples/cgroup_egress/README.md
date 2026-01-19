@@ -17,7 +17,7 @@ Counts outgoing network packets for processes in a cgroup using a `cgroup_skb/eg
 
 ```bash
 tinybpf docker-compile egress_filter.bpf.c
-sudo $(which uv) run main.py
+tinybpf run-elevated main.py
 ```
 
 Generate some network traffic in another terminal to see the counter increase.

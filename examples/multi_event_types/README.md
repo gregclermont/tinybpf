@@ -12,7 +12,7 @@ Both share a common header with the discriminator at a fixed offset, allowing Py
 
 ```bash
 tinybpf docker-compile events.bpf.c
-sudo $(which uv) run main.py
+tinybpf run-elevated main.py
 ```
 
 ## Key Pattern: Shared Header with Discriminator

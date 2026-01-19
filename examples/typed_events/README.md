@@ -12,7 +12,7 @@ This example also shows BTF validation with `register_type()`.
 
 ```bash
 tinybpf docker-compile process_events.bpf.c
-sudo $(which uv) run main.py
+tinybpf run-elevated main.py
 ```
 
 ## See Also

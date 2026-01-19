@@ -8,7 +8,7 @@ The BPF program filters events based on a target PID set from Python. You can up
 
 ```bash
 tinybpf docker-compile filter.bpf.c
-sudo $(which uv) run main.py
+tinybpf run-elevated main.py
 ```
 
 The script will:

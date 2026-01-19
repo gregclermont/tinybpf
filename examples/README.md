@@ -13,10 +13,8 @@ cd examples/basic_tracepoint
 tinybpf docker-compile trace_exec.bpf.c
 
 # Run it (requires root)
-sudo $(which uv) run main.py
+tinybpf run-elevated main.py
 ```
-
-**Why `$(which uv)`?** BPF requires root, but `sudo` resets PATH and won't find `uv`. The subshell resolves the full path first.
 
 To compile all examples at once: `make compile` from the repo root.
 

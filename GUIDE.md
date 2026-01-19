@@ -393,12 +393,13 @@ bpftool btf dump file program.bpf.o | grep -A 10 "'event'"
 
 ### Running with Root
 
-BPF operations require root privileges. When using uv:
+BPF operations require root privileges:
 
 ```bash
-# sudo resets PATH, so uv won't be found. Resolve the path first:
-sudo $(which uv) run python my_bpf_script.py
+tinybpf run-elevated my_bpf_script.py
 ```
+
+This runs `sudo` with the current Python interpreter, preserving your virtual environment.
 
 ### CI Workflow
 
