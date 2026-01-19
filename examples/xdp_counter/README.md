@@ -8,7 +8,7 @@ XDP programs run at the earliest point in the network stack, before the kernel a
 
 ```bash
 tinybpf docker-compile counter.bpf.c
-sudo $(which uv) run main.py lo  # or eth0, etc.
+tinybpf run-elevated main.py lo  # or eth0, etc.
 ```
 
 The script attaches to the specified interface and prints packet counts every second.

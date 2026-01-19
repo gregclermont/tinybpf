@@ -10,7 +10,7 @@ Traces process execution using a tracepoint on `sys_enter_execve`. Demonstrates 
 
 ```bash
 tinybpf docker-compile trace_exec.bpf.c
-sudo $(which uv) run main.py
+tinybpf run-elevated main.py
 ```
 
 Then run commands in another terminal to see output.
