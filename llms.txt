@@ -11,6 +11,13 @@ pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf
 
 Requires Linux 5.8+ (for ring buffers; basic features work on older kernels), libelf, root/CAP_BPF. Wheels: manylinux_2_28 x86_64/aarch64.
 
+## Detailed Docs
+
+For detailed docstrings on any function/method:
+```bash
+python -m pydoc tinybpf.BpfProgram.attach_cgroup
+```
+
 ## API
 
 ```python
