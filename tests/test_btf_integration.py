@@ -1055,6 +1055,50 @@ class TestTypeConversionErrors:
             with pytest.raises(ValueError, match="Value size mismatch"):
                 hash_map[b"\x00" * 4] = b"\x00" * 4
 
+    def test_typed_unsupported_key_type_raises(self, test_maps_bpf_path: Path) -> None:
+        """Using unsupported key type with typed() raises TypeError on read."""
+        import ctypes
+
+        import pytest
+
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.maps["pid_counts"]
+
+            # Write a value with bytes key
+            key = (12345).to_bytes(4, "little")
+            hash_map[key] = (42).to_bytes(8, "little")
+
+            # ctypes simple types are not supported - use int instead
+            typed_map = hash_map.typed(key=ctypes.c_uint32)
+
+            with pytest.raises(TypeError, match=r"typed\(\) key must be int or ctypes.Structure"):
+                typed_map[key]
+
+            # Clean up
+            del hash_map[key]
+
+    def test_typed_unsupported_value_type_raises(self, test_maps_bpf_path: Path) -> None:
+        """Using unsupported value type with typed() raises TypeError on read."""
+        import ctypes
+
+        import pytest
+
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            hash_map = obj.maps["pid_counts"]
+
+            # Write a value
+            key = (12345).to_bytes(4, "little")
+            hash_map[key] = (42).to_bytes(8, "little")
+
+            # ctypes simple types are not supported - use int instead
+            typed_map = hash_map.typed(value=ctypes.c_uint64)
+
+            with pytest.raises(TypeError, match=r"typed\(\) value must be int or ctypes.Structure"):
+                typed_map[key]
+
+            # Clean up
+            del hash_map[key]
+
 
 class TestAutoInferenceEdgeCases:
     """Tests for edge cases in BTF auto-inference."""
