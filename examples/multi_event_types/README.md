@@ -11,7 +11,7 @@ Both share a common header with the discriminator at a fixed offset, allowing Py
 ## Run
 
 ```bash
-make compile  # from repo root
+tinybpf docker-compile events.bpf.c
 sudo $(which uv) run main.py
 ```
 

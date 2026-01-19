@@ -11,7 +11,7 @@ This example also shows BTF validation with `register_type()`.
 ## Run
 
 ```bash
-make compile  # from repo root
+tinybpf docker-compile process_events.bpf.c
 sudo $(which uv) run main.py
 ```
 

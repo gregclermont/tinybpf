@@ -9,7 +9,7 @@ Traces process execution using a tracepoint on `sys_enter_execve`. Demonstrates 
 ## Run
 
 ```bash
-make compile  # from repo root
+tinybpf docker-compile trace_exec.bpf.c
 sudo $(which uv) run main.py
 ```
 

@@ -7,7 +7,7 @@ XDP programs run at the earliest point in the network stack, before the kernel a
 ## Run
 
 ```bash
-make compile  # from repo root
+tinybpf docker-compile counter.bpf.c
 sudo $(which uv) run main.py lo  # or eth0, etc.
 ```
 
