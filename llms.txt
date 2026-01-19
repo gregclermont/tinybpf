@@ -73,7 +73,7 @@ map.is_standalone   # True if opened from pinned path
 map.typed(value=Event)         # -> BpfMap[Any, Event] for ctypes.Structure
 map.typed(key=int, value=int, validate_field_names=True)  # explicit validation
 # Common patterns with .typed()
-config_map = map.typed(key=int, value=ConfigStruct)
+config_map = map.typed(key=int, value=Config)
 config_map[0] = Config(field=value)   # single-entry array map pattern
 stats_map = map.typed(key=int, value=StatsStruct)
 for key, stats in stats_map.items():  # iterate with typed keys and values
