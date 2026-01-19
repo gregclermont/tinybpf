@@ -8,15 +8,17 @@ Runnable examples demonstrating tinybpf patterns. Each example includes:
 ## Running Examples
 
 ```bash
-# Compile all examples
-make compile
-
-# Run an example (requires root)
+# Compile an example
 cd examples/basic_tracepoint
+tinybpf docker-compile trace_exec.bpf.c
+
+# Run it (requires root)
 sudo $(which uv) run main.py
 ```
 
 **Why `$(which uv)`?** BPF requires root, but `sudo` resets PATH and won't find `uv`. The subshell resolves the full path first.
+
+To compile all examples at once: `make compile` from the repo root.
 
 Each script declares its dependencies inline, so `uv run` installs tinybpf automatically on first run.
 
@@ -29,6 +31,7 @@ Each script declares its dependencies inline, so `uv run` installs tinybpf autom
 | [multi_event_types](multi_event_types/) | Handle multiple event types with discriminator field | [Multiple Event Types](../GUIDE.md#multiple-event-types) |
 | [config_map](config_map/) | Pass configuration from userspace to BPF | [Config Maps](../GUIDE.md#config-maps) |
 | [xdp_counter](xdp_counter/) | Count packets with XDP and per-CPU maps | - |
+| [cgroup_egress](cgroup_egress/) | Count egress packets with cgroup BPF | [Cgroup Programs](../GUIDE.md#cgroup-programs) |
 
 ## Prerequisites
 

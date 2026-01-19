@@ -4,20 +4,28 @@ This guide covers patterns and best practices for writing BPF programs that work
 
 ## Compiling BPF Programs
 
-Use the `ghcr.io/gregclermont/tinybpf-compile` Docker image to compile `.bpf.c` files:
+Use the `tinybpf` CLI to compile `.bpf.c` files:
 
 ```bash
 # Compile a single file
-docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile program.bpf.c
+tinybpf docker-compile program.bpf.c
 
 # Compile multiple files
-docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c
+tinybpf docker-compile src/*.bpf.c
 
 # Output to specific directory
-docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile -o build/ src/*.bpf.c
+tinybpf docker-compile -o build/ src/*.bpf.c
 ```
 
-The image bundles libbpf headers and `vmlinux.h` (kernel 6.18) for CO-RE support. Output `.bpf.o` files are written alongside sources (or to the specified output directory).
+The CLI uses a Docker image with libbpf headers and `vmlinux.h` (kernel 6.18) for CO-RE support. Output `.bpf.o` files are written alongside sources (or to the specified output directory).
+
+<details>
+<summary>Using Docker directly</summary>
+
+```bash
+docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c
+```
+</details>
 
 ### Custom vmlinux.h
 
