@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tinybpf"
-version = "0.0.1"
+dynamic = ["version"]
 description = "Minimal Python library for loading and interacting with eBPF programs"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -24,6 +24,9 @@ dev = ["pytest", "pytest-asyncio", "mypy", "ruff", "pre-commit"]
 
 [project.scripts]
 tinybpf = "tinybpf._cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "tinybpf.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -399,7 +399,6 @@ wheels = [
 
 [[package]]
 name = "tinybpf"
-version = "0.0.1"
 source = { editable = "." }
 
 [package.optional-dependencies]
