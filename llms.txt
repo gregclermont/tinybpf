@@ -9,7 +9,7 @@ uv add tinybpf --index https://gregclermont.github.io/tinybpf
 pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf
 ```
 
-Requires Linux 5.8+ (for ring buffers; basic features work on older kernels), libelf, root/CAP_BPF. Wheels: manylinux_2_28 x86_64/aarch64.
+Requires Linux 5.8+ (for ring buffers; basic features work on older kernels), libelf, root/CAP_BPF. Wheels: manylinux_2_28 x86_64/aarch64. Source distribution also available for use with system libbpf (1.0+): `uv add --no-binary tinybpf` or `pip install --no-binary tinybpf`, then `tinybpf.init("/usr/lib/.../libbpf.so.1")`.
 
 ## Detailed Docs
 
