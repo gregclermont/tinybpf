@@ -14,7 +14,7 @@ tinybpf docker-compile program.bpf.c
 tinybpf docker-compile src/*.bpf.c
 
 # Output to specific directory
-tinybpf docker-compile -o build/ src/*.bpf.c
+tinybpf docker-compile src/*.bpf.c -o build/
 ```
 
 The CLI uses a Docker image with libbpf headers and `vmlinux.h` (kernel 6.18) for CO-RE support. Output `.bpf.o` files are written alongside sources (or to the specified output directory).

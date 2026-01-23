@@ -52,14 +52,13 @@ def cmd_docker_compile(args: argparse.Namespace) -> int:
         "--rm",
         "-v",
         f"{cwd}:/src",
+        image_tag,
+        *args.sources,
     ]
 
     # Pass through output directory if specified
     if args.output:
         docker_cmd.extend(["-o", args.output])
-
-    docker_cmd.append(image_tag)
-    docker_cmd.extend(args.sources)
 
     if args.verbose:
         print(f"Running: {' '.join(docker_cmd)}", file=sys.stderr)
