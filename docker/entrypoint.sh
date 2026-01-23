@@ -56,7 +56,7 @@ if [ $# -eq 0 ]; then
     echo ""
     echo "Examples:"
     echo "  docker run --rm -v \$(pwd):/src ghcr.io/gregclermont/tinybpf-compile program.bpf.c"
-    echo "  docker run --rm -v \$(pwd):/src ghcr.io/gregclermont/tinybpf-compile -o build/ src/*.bpf.c"
+    echo "  docker run --rm -v \$(pwd):/src ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c -o build/"
     echo ""
     echo "  # Use custom vmlinux.h for older kernel:"
     echo "  docker run --rm -v \$(pwd):/src -v /path/to/vmlinux.h:/vmlinux.h -e VMLINUX=/vmlinux.h \\"
@@ -64,15 +64,25 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
-# Parse options
+# Parse arguments (options can appear anywhere)
 OUTPUT_DIR=""
-while getopts "o:" opt; do
-    case $opt in
-        o) OUTPUT_DIR="$OPTARG" ;;
-        *) exit 1 ;;
+SOURCES=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o)
+            if [ -z "$2" ]; then
+                echo "Error: -o requires an argument" >&2
+                exit 1
+            fi
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        *)
+            SOURCES+=("$1")
+            shift
+            ;;
     esac
 done
-shift $((OPTIND - 1))
 
 # Create output directory if specified
 if [ -n "$OUTPUT_DIR" ]; then
@@ -81,7 +91,7 @@ fi
 
 # Compile each source file
 FAILED=0
-for src in "$@"; do
+for src in "${SOURCES[@]}"; do
     if [ ! -f "$src" ]; then
         echo "Error: File not found: $src" >&2
         FAILED=1

@@ -150,7 +150,7 @@ tinybpf provides a Docker image for compiling eBPF programs. It bundles libbpf h
 make compile
 
 # Advanced: run docker directly (on Linux, or inside Lima shell on macOS)
-docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile -o build/ src/*.bpf.c
+docker run --rm -v $(pwd):/src ghcr.io/gregclermont/tinybpf-compile src/*.bpf.c -o build/
 docker run --rm -v $(pwd):/src -e EXTRA_CFLAGS="-DDEBUG" ghcr.io/gregclermont/tinybpf-compile program.bpf.c
 ```
 
