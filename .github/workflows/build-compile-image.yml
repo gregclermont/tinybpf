@@ -55,9 +55,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Version tags (:X.Y.Z, :libbpf-X.Y.Z) are set by the release workflow
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=libbpf-${{ steps.versions.outputs.libbpf }}
             type=sha,prefix=
 
       - name: Build and push

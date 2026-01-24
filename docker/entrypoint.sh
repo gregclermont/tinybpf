@@ -48,7 +48,7 @@ if [ $# -eq 0 ]; then
     echo "Compiles eBPF source files (.bpf.c) to object files (.bpf.o)"
     echo ""
     echo "Options:"
-    echo "  -o DIR    Output directory (default: same as source)"
+    echo "  -o PATH   Output directory, or file path when compiling a single file"
     echo ""
     echo "Environment:"
     echo "  VMLINUX         Path to custom vmlinux.h (default: bundled kernel 6.18)"
@@ -84,9 +84,38 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Create output directory if specified
+# Determine if output is a file or directory
+OUTPUT_FILE=""
+OUTPUT_DIR_RESOLVED=""
 if [ -n "$OUTPUT_DIR" ]; then
-    mkdir -p "$OUTPUT_DIR"
+    if [[ "$OUTPUT_DIR" == */ ]]; then
+        # Trailing slash = directory
+        OUTPUT_DIR_RESOLVED="$OUTPUT_DIR"
+        mkdir -p "$OUTPUT_DIR_RESOLVED"
+    elif [[ "$OUTPUT_DIR" == *.bpf.o ]]; then
+        # .bpf.o suffix = file
+        if [ ${#SOURCES[@]} -gt 1 ]; then
+            echo "Error: Cannot use output file path with multiple sources" >&2
+            exit 1
+        fi
+        OUTPUT_FILE="$OUTPUT_DIR"
+        mkdir -p "$(dirname "$OUTPUT_FILE")"
+    elif [ -d "$OUTPUT_DIR" ]; then
+        # Existing directory
+        OUTPUT_DIR_RESOLVED="$OUTPUT_DIR"
+    elif [ -f "$OUTPUT_DIR" ]; then
+        # Existing file
+        if [ ${#SOURCES[@]} -gt 1 ]; then
+            echo "Error: Cannot use output file path with multiple sources" >&2
+            exit 1
+        fi
+        OUTPUT_FILE="$OUTPUT_DIR"
+    else
+        # Ambiguous - doesn't exist, no trailing slash, no .bpf.o suffix
+        echo "Error: Output path '$OUTPUT_DIR' is ambiguous (does not exist)" >&2
+        echo "Use trailing / for directory (e.g., build/) or .bpf.o suffix for file" >&2
+        exit 1
+    fi
 fi
 
 # Compile each source file
@@ -99,13 +128,16 @@ for src in "${SOURCES[@]}"; do
     fi
 
     # Determine output path
-    if [ -n "$OUTPUT_DIR" ]; then
-        obj="$OUTPUT_DIR/$(basename "${src%.bpf.c}.bpf.o")"
+    if [ -n "$OUTPUT_FILE" ]; then
+        obj="$OUTPUT_FILE"
+    elif [ -n "$OUTPUT_DIR_RESOLVED" ]; then
+        obj="$OUTPUT_DIR_RESOLVED/$(basename "${src%.bpf.c}.bpf.o")"
     else
         obj="${src%.bpf.c}.bpf.o"
     fi
 
     echo "Compiling: $src -> $obj"
+    # shellcheck disable=SC2086  # CFLAGS must be word-split
     if ! clang $CFLAGS -c "$src" -o "$obj"; then
         echo "Error: Failed to compile $src" >&2
         FAILED=1

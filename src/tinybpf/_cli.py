@@ -32,17 +32,59 @@ def cmd_version(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _docker_image_exists_locally(image: str) -> bool:
+    """Check if a docker image exists locally."""
+    result = subprocess.run(
+        ["docker", "image", "inspect", image],
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _docker_pull(image: str, verbose: bool = False) -> bool:
+    """Try to pull a docker image. Returns True if successful."""
+    if verbose:
+        print(f"Pulling: {image}", file=sys.stderr)
+    result = subprocess.run(
+        ["docker", "pull", image],
+        capture_output=not verbose,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _resolve_compile_image(verbose: bool = False) -> str:
+    """Resolve the docker image to use for compilation.
+
+    Tries version-tagged image first, falls back to libbpf-tagged image.
+    """
+    base = "ghcr.io/gregclermont/tinybpf-compile"
+    version_tag = f"{base}:{__version__}"
+    libbpf_version = _get_version_file(".libbpf-version")
+    libbpf_tag = f"{base}:libbpf-{libbpf_version}" if libbpf_version else f"{base}:latest"
+
+    # Check if version-tagged image exists locally
+    if _docker_image_exists_locally(version_tag):
+        return version_tag
+
+    # Try to pull version-tagged image
+    if _docker_pull(version_tag, verbose=verbose):
+        return version_tag
+
+    # Fall back to libbpf-tagged image
+    if verbose:
+        print(f"Version-tagged image not found, using {libbpf_tag}", file=sys.stderr)
+    return libbpf_tag
+
+
 def cmd_docker_compile(args: argparse.Namespace) -> int:
     """Compile BPF programs using the Docker image."""
     if not shutil.which("docker"):
         print("Error: docker not found in PATH", file=sys.stderr)
         return 1
 
-    libbpf_version = _get_version_file(".libbpf-version")
-    if libbpf_version:
-        image_tag = f"ghcr.io/gregclermont/tinybpf-compile:libbpf-{libbpf_version}"
-    else:
-        image_tag = "ghcr.io/gregclermont/tinybpf-compile:latest"
+    image_tag = _resolve_compile_image(verbose=args.verbose)
 
     # Build docker command
     cwd = Path.cwd()
@@ -64,6 +106,34 @@ def cmd_docker_compile(args: argparse.Namespace) -> int:
         print(f"Running: {' '.join(docker_cmd)}", file=sys.stderr)
 
     return subprocess.call(docker_cmd)
+
+
+def cmd_docker_pull(_args: argparse.Namespace) -> int:
+    """Pull the latest docker compile image."""
+    if not shutil.which("docker"):
+        print("Error: docker not found in PATH", file=sys.stderr)
+        return 1
+
+    base = "ghcr.io/gregclermont/tinybpf-compile"
+    version_tag = f"{base}:{__version__}"
+    libbpf_version = _get_version_file(".libbpf-version")
+    libbpf_tag = f"{base}:libbpf-{libbpf_version}" if libbpf_version else None
+
+    # Pull version-tagged image
+    print(f"Pulling {version_tag}...")
+    if _docker_pull(version_tag, verbose=True):
+        print(f"Successfully pulled {version_tag}")
+        return 0
+
+    # Fall back to libbpf-tagged image
+    if libbpf_tag:
+        print(f"Version-tagged image not found, trying {libbpf_tag}...")
+        if _docker_pull(libbpf_tag, verbose=True):
+            print(f"Successfully pulled {libbpf_tag}")
+            return 0
+
+    print("Error: Failed to pull compile image", file=sys.stderr)
+    return 1
 
 
 def cmd_run_elevated(args: argparse.Namespace) -> int:
@@ -108,7 +178,7 @@ def main() -> int:
     compile_parser.add_argument(
         "-o",
         "--output",
-        help="Output directory for compiled .bpf.o files",
+        help="Output directory, or file path when compiling a single file",
     )
     compile_parser.add_argument(
         "-v",
@@ -122,6 +192,14 @@ def main() -> int:
         help="Source .bpf.c files to compile",
     )
     compile_parser.set_defaults(func=cmd_docker_compile)
+
+    # docker-pull command
+    pull_parser = subparsers.add_parser(
+        "docker-pull",
+        help="Pull the latest compile image",
+        description="Pull the tinybpf-compile Docker image for the current CLI version.",
+    )
+    pull_parser.set_defaults(func=cmd_docker_pull)
 
     # run-elevated command
     run_parser = subparsers.add_parser(

@@ -7,11 +7,17 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: gregclermont/tinybpf-compile
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
+      libbpf_version: ${{ steps.get-versions.outputs.libbpf }}
+      vmlinux_version: ${{ steps.get-versions.outputs.vmlinux }}
 
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +54,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Read libbpf and vmlinux versions
+        id: get-versions
+        run: |
+          echo "libbpf=$(cat src/tinybpf/.libbpf-version)" >> $GITHUB_OUTPUT
+          echo "vmlinux=$(cat src/tinybpf/.vmlinux-version)" >> $GITHUB_OUTPUT
+
   build-ebpf:
     needs: prepare
     runs-on: ubuntu-latest
@@ -62,6 +74,45 @@ jobs:
         with:
           name: test-ebpf-objects
           path: tests/bpf/*.bpf.o
+
+  build-compile-image:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: docker
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:libbpf-${{ needs.prepare.outputs.libbpf_version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          build-args: |
+            LIBBPF_VERSION=${{ needs.prepare.outputs.libbpf_version }}
+            VMLINUX_VERSION=${{ needs.prepare.outputs.vmlinux_version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   build:
     needs: prepare
