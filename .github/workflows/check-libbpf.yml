@@ -1,0 +1,87 @@
+name: Check libbpf updates
+
+# libbpf release tags are permanent (no silent-rotation hazard like
+# vmlinux.h), and bumping the bundled .so is a multi-step, ABI-sensitive
+# change. So rather than auto-opening a bump PR, this job only notifies:
+# when a newer same-major libbpf release is available upstream it opens a
+# tracking issue with the bump runbook.
+
+on:
+  schedule:
+    - cron: '0 6 * * 2'  # Tuesdays 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: check-libbpf
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for a newer libbpf release
+        run: |
+          set -euo pipefail
+          current=$(tr -d '[:space:]' < src/tinybpf/.libbpf-version)
+          major=${current%%.*}
+
+          # Latest released tag within the same major series, so e.g. a future
+          # 2.0 release never auto-notifies a major jump.
+          latest=$(gh api --paginate repos/libbpf/libbpf/tags --jq '.[].name' \
+            | sed -n "s/^v\\(${major}\\.[0-9][0-9]*\\.[0-9][0-9]*\\)$/\\1/p" \
+            | sort -V | tail -1)
+
+          if [ -z "$latest" ]; then
+            echo "::error::Could not list libbpf ${major}.x tags upstream"
+            exit 1
+          fi
+
+          newer=$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)
+          if [ "$latest" = "$current" ] || [ "$newer" != "$latest" ]; then
+            echo "Bundled libbpf $current is up to date with the latest ${major}.x ($latest)."
+            exit 0
+          fi
+          echo "Newer libbpf available: $current -> $latest"
+
+          # Ensure the tracking label exists (idempotent).
+          gh label create libbpf-update \
+            --color BFD4F2 \
+            --description "Automated libbpf update notifications" \
+            --force
+
+          # Don't duplicate: skip if an open issue already mentions this version.
+          if gh issue list --state open --label libbpf-update --json title --jq '.[].title' \
+               | grep -qF "$latest"; then
+            echo "An open tracking issue for libbpf $latest already exists; nothing to do."
+            exit 0
+          fi
+
+          {
+          echo "Upstream [libbpf](https://github.com/libbpf/libbpf/releases) released **v$latest**, newer than the bundled **$current**."
+          echo
+          echo "Unlike \`vmlinux.h\`, libbpf release tags are permanent, so this is a *stay-current* update rather than an urgent fix. Bumping the bundled \`.so\` is ABI-sensitive and multi-step, so it is intentionally manual."
+          echo
+          echo "### Runbook"
+          echo "1. Run the **Build libbpf** workflow (\`build-libbpf.yml\`) with \`libbpf_version: $latest\` to build and publish the \`libbpf-v$latest\` release assets (\`libbpf-{x86_64,aarch64}.tar.gz\`)."
+          echo "2. Update \`src/tinybpf/.libbpf-version\` to \`$latest\`."
+          echo "3. Open a PR. Merging rebuilds the compile image (\`build-compile-image\`, which pulls libbpf headers); the wheel build and \`make setup-linux\` then download the new \`.so\`."
+          echo "4. Review ABI/behavior: confirm the symbols declared in \`src/tinybpf/_libbpf/bindings.py\` still match, and that the root test suite passes against a wheel built with the new \`.so\` (the release wheel-test jobs cover this)."
+          echo "5. Optional supply-chain hardening: record the \`.so\` \`sha256\` and verify it on download."
+          echo
+          echo "See the [libbpf v$latest release notes](https://github.com/libbpf/libbpf/releases/tag/v$latest)."
+          echo
+          echo "_Opened automatically by \`.github/workflows/check-libbpf.yml\`._"
+          } > issue-body.md
+
+          gh issue create \
+            --title "chore: libbpf $latest available (bundled: $current)" \
+            --label libbpf-update \
+            --body-file issue-body.md
