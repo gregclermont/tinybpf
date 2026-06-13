@@ -20,12 +20,10 @@ class TestBtfProperty:
     """Tests for BTF property on BpfObject."""
 
     def test_btf_property_exists(self, test_maps_bpf_path: Path) -> None:
-        """BpfObject has btf property."""
+        """BpfObject has btf property and it is non-None for CO-RE programs."""
         with tinybpf.load(test_maps_bpf_path) as obj:
-            # BTF should be available (CO-RE programs have BTF)
-            btf = obj.btf
-            # May or may not be None depending on build
-            assert hasattr(obj, "btf")
+            # CO-RE programs compiled with -g always have BTF
+            assert obj.btf is not None
 
     def test_btf_property_lazy_loaded(self, test_maps_bpf_path: Path) -> None:
         """BTF property is lazy-loaded."""
@@ -899,17 +897,11 @@ class TestBtfValidationErrors:
 class TestValidateFieldNamesParameter:
     """Tests for validate_field_names parameter in typed()."""
 
-    def test_validate_field_names_default_true(self, test_maps_bpf_path: Path) -> None:
-        """validate_field_names defaults to True."""
-        with tinybpf.load(test_maps_bpf_path) as obj:
-            counters = obj.maps["counters"]
-
-            class Value(ctypes.Structure):
-                _fields_ = [("count", ctypes.c_uint64)]
-
-            # Should succeed with correct size (name validation is best-effort)
-            typed_map = counters.typed(value=Value, validate_field_names=True)
-            assert typed_map is not None
+    # test_validate_field_names_default_true was removed: the maps in
+    # test_maps.bpf.c have INT-typed values (not structs), so
+    # validate_field_names=True never exercises the field-name code path.
+    # A meaningful test would require a map whose BTF value type is a STRUCT.
+    # The test_validate_field_names_false test below still covers the flag.
 
     def test_validate_field_names_false(self, test_maps_bpf_path: Path) -> None:
         """validate_field_names=False only validates sizes."""
@@ -1055,11 +1047,9 @@ class TestTypeConversionErrors:
             with pytest.raises(ValueError, match="Value size mismatch"):
                 hash_map[b"\x00" * 4] = b"\x00" * 4
 
-    def test_typed_unsupported_key_type_raises(self, test_maps_bpf_path: Path) -> None:
-        """Using unsupported key type with typed() raises TypeError on read."""
+    def test_typed_ctypes_scalar_key_roundtrips(self, test_maps_bpf_path: Path) -> None:
+        """A ctypes scalar key type (e.g. c_uint32) is read back as a Python int."""
         import ctypes
-
-        import pytest
 
         with tinybpf.load(test_maps_bpf_path) as obj:
             hash_map = obj.maps["pid_counts"]
@@ -1068,20 +1058,17 @@ class TestTypeConversionErrors:
             key = (12345).to_bytes(4, "little")
             hash_map[key] = (42).to_bytes(8, "little")
 
-            # ctypes simple types are not supported - use int instead
+            # ctypes simple types carry their own signedness and are unwrapped
+            # to a plain Python scalar on read.
             typed_map = hash_map.typed(key=ctypes.c_uint32)
-
-            with pytest.raises(TypeError, match=r"typed\(\) key must be int or ctypes.Structure"):
-                typed_map[key]
+            assert typed_map[key] == 42
 
             # Clean up
             del hash_map[key]
 
-    def test_typed_unsupported_value_type_raises(self, test_maps_bpf_path: Path) -> None:
-        """Using unsupported value type with typed() raises TypeError on read."""
+    def test_typed_ctypes_scalar_value_roundtrips(self, test_maps_bpf_path: Path) -> None:
+        """A ctypes scalar value type (e.g. c_uint64) is read back as a Python int."""
         import ctypes
-
-        import pytest
 
         with tinybpf.load(test_maps_bpf_path) as obj:
             hash_map = obj.maps["pid_counts"]
@@ -1090,11 +1077,9 @@ class TestTypeConversionErrors:
             key = (12345).to_bytes(4, "little")
             hash_map[key] = (42).to_bytes(8, "little")
 
-            # ctypes simple types are not supported - use int instead
+            # ctypes simple types are unwrapped to a plain Python scalar on read.
             typed_map = hash_map.typed(value=ctypes.c_uint64)
-
-            with pytest.raises(TypeError, match=r"typed\(\) value must be int or ctypes.Structure"):
-                typed_map[key]
+            assert typed_map[key] == 42
 
             # Clean up
             del hash_map[key]

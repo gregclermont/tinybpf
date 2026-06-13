@@ -3,6 +3,7 @@
 Run with: sudo pytest tests/test_maps.py -v
 """
 
+import ctypes
 from pathlib import Path
 
 import pytest
@@ -507,3 +508,133 @@ class TestPerCpuMaps:
 
             assert result is not None
             assert all(isinstance(v, int) for v in result)
+
+
+class TestSignedIntHandling:
+    """Tests for signed integer key/value conversion."""
+
+    def test_ctypes_signed_value_round_trip(self, test_maps_bpf_path: Path) -> None:
+        """Negative values round-trip via explicit ctypes signed types."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            # pid_counts has u32 key / u64 value; reinterpret as signed via
+            # explicit ctypes types (the kernel stores raw bytes).
+            m = obj.maps["pid_counts"].typed(key=ctypes.c_int32, value=ctypes.c_int64)
+
+            m[-5] = -123456789
+            result = m[-5]
+            assert result == -123456789
+            assert isinstance(result, int)
+
+            del m[-5]
+
+    def test_ctypes_signed_key_iteration(self, test_maps_bpf_path: Path) -> None:
+        """Iteration returns negative keys/values for signed ctypes types."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            m = obj.maps["pid_counts"].typed(key=ctypes.c_int32, value=ctypes.c_int64)
+            m[-1] = -1
+            try:
+                keys = list(m.keys())
+                assert -1 in keys
+                items = dict(m.items())
+                assert items[-1] == -1
+            finally:
+                del m[-1]
+
+    def test_unsigned_btf_rejects_negative(self, test_maps_bpf_path: Path) -> None:
+        """Plain-int write to an unsigned BTF map rejects negatives clearly."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            # pid_counts value is __u64 (unsigned in BTF); a negative plain int
+            # should raise ValueError rather than OverflowError.
+            m = obj.maps["pid_counts"].typed(key=int, value=int)
+            with pytest.raises(ValueError, match="unsigned"):
+                m[12345] = -1
+
+    def test_unsigned_btf_accepts_full_range(self, test_maps_bpf_path: Path) -> None:
+        """Large unsigned values fitting the width still encode correctly."""
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            m = obj.maps["pid_counts"].typed(key=int, value=int)
+            big = (1 << 64) - 1  # max u64
+            m[12345] = big
+            try:
+                assert m[12345] == big
+            finally:
+                del m[12345]
+
+
+class TestTypedViewFdOwnership:
+    """Tests that typed() views of standalone maps own independent fds."""
+
+    @pytest.fixture
+    def pin_path(self) -> str:
+        path = "/sys/fs/bpf/tinybpf_test_typed_fd"
+        yield path
+        p = Path(path)
+        if p.exists():
+            p.unlink()
+
+    def test_typed_view_survives_parent_close(
+        self, test_maps_bpf_path: Path, pin_path: str
+    ) -> None:
+        """Closing the parent standalone map leaves the typed view usable.
+
+        Each typed view dups the fd, so closing one does not close the other,
+        and there is no double-close of a single fd.
+        """
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            obj.maps["pid_counts"].pin(pin_path)
+
+        parent = tinybpf.open_pinned_map(pin_path)
+        view = parent.typed(key=int, value=int)
+
+        # Closing the parent must not invalidate the view's own fd.
+        parent.close()
+        view[4242] = 7
+        assert view[4242] == 7
+        del view[4242]
+        view.close()
+
+
+class TestOpenPinnedMapValidation:
+    """Tests that open_pinned_map validates the pinned object is a map."""
+
+    @pytest.fixture
+    def prog_pin_path(self) -> str:
+        path = "/sys/fs/bpf/tinybpf_test_pinned_prog"
+        yield path
+        p = Path(path)
+        if p.exists():
+            p.unlink()
+
+    def test_open_pinned_non_map_raises(self, test_maps_bpf_path: Path, prog_pin_path: str) -> None:
+        """Opening a pinned program (not a map) raises a clear BpfError."""
+        # Pin a loaded program fd via the raw bpf(BPF_OBJ_PIN) syscall so we
+        # have a non-map pinned object to point open_pinned_map at.
+        BPF_OBJ_PIN = 6
+        SYS_BPF = 321  # x86_64; bpf() syscall number
+
+        class _BpfAttrObj(ctypes.Structure):
+            _fields_ = [
+                ("pathname", ctypes.c_uint64),
+                ("bpf_fd", ctypes.c_uint32),
+                ("file_flags", ctypes.c_uint32),
+            ]
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+
+        with tinybpf.load(test_maps_bpf_path) as obj:
+            prog_name = next(iter(obj.programs))
+            prog = obj.programs[prog_name]
+            prog_fd = prog.fd
+
+            path_buf = ctypes.create_string_buffer(prog_pin_path.encode())
+            attr = _BpfAttrObj(
+                pathname=ctypes.cast(path_buf, ctypes.c_void_p).value or 0,
+                bpf_fd=prog_fd,
+                file_flags=0,
+            )
+            ret = libc.syscall(SYS_BPF, BPF_OBJ_PIN, ctypes.byref(attr), ctypes.sizeof(attr))
+            if ret < 0:
+                pytest.skip("could not pin program fd via bpf() syscall")
+
+            with pytest.raises(tinybpf.BpfError, match="not a"):
+                tinybpf.open_pinned_map(prog_pin_path)

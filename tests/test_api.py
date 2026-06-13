@@ -7,14 +7,15 @@ import tinybpf
 
 
 def test_exports() -> None:
-    """All expected symbols are exported."""
-    expected = [
+    """All expected symbols are exported and __all__ is exactly this set."""
+    expected = {
         # Version functions
         "version",
         "init",
         "libbpf_version",
         # Main API
         "load",
+        "open_pinned_map",
         # Classes
         "BpfObject",
         "BpfProgram",
@@ -28,6 +29,7 @@ def test_exports() -> None:
         # Data classes
         "MapInfo",
         "ProgramInfo",
+        "RingBufferEvent",
         "BtfType",
         "BtfField",
         # Enums
@@ -41,9 +43,14 @@ def test_exports() -> None:
         "BPF_ANY",
         "BPF_NOEXIST",
         "BPF_EXIST",
-    ]
-    for name in expected:
-        assert hasattr(tinybpf, name), f"Missing export: {name}"
+    }
+    actual = set(tinybpf.__all__)
+    missing = expected - actual
+    extra = actual - expected
+    assert not missing, f"Names in expected but missing from __all__: {missing}"
+    assert not extra, f"Names in __all__ not in expected (update expected list): {extra}"
+    for name in tinybpf.__all__:
+        assert hasattr(tinybpf, name), f"Name in __all__ but not resolvable: {name}"
 
 
 def test_map_type_enum() -> None:

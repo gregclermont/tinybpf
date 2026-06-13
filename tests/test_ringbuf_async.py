@@ -187,6 +187,50 @@ class TestBpfRingBufferAsync:
         # Frozen dataclass - should be hashable
         assert hash(event) is not None
 
+    async def test_ringbuf_async_iter_after_close_drains_queue(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """Async iteration after close drains queued events then raises StopAsyncIteration."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                rb = tinybpf.BpfRingBuffer(obj.maps["events"])
+
+                # Trigger events and poll synchronously to fill the queue
+                subprocess.run(["/bin/true"], check=True)
+                rb.poll(timeout_ms=100)
+
+                # Queue should have events
+                assert len(rb._event_queue) >= 1, "Expected queued events before close"
+
+                # Close the buffer — queue still holds the captured events
+                rb.close()
+
+                # Async iteration should drain the queue (not raise BpfError)
+                drained: list[bytes] = []
+                aiter = rb.__aiter__()
+                # __aiter__ is called on the closed rb; drain until StopAsyncIteration
+                try:
+                    while True:
+                        event = await aiter.__anext__()
+                        drained.append(event)
+                except StopAsyncIteration:
+                    pass  # Expected clean termination
+
+                assert len(drained) >= 1, "Should have drained queued events"
+
+    async def test_ringbuf_async_iter_after_close_empty_queue_stops(
+        self, ringbuf_bpf_path: Path
+    ) -> None:
+        """Async iteration on closed buffer with empty queue raises StopAsyncIteration."""
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            rb = tinybpf.BpfRingBuffer(obj.maps["events"])
+            # Close with no events queued
+            rb.close()
+
+            aiter = rb.__aiter__()
+            with pytest.raises(StopAsyncIteration):
+                await aiter.__anext__()
+
 
 class TestBpfRingBufferAsyncTyped:
     """Tests for typed events in async ring buffer operations."""

@@ -377,6 +377,43 @@ class TestBpfRingBuffer:
                 list(rb)
             rb.close()
 
+    def test_ringbuf_callback_none_return_works(self, ringbuf_bpf_path: Path) -> None:
+        """Callback returning None is treated as 0 (continue) — no crash per event."""
+        events: list[bytes] = []
+
+        def callback(data: bytes) -> None:  # type: ignore[return]
+            events.append(data)
+            # Intentionally returns None (implicit)
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                with tinybpf.BpfRingBuffer(obj.maps["events"], callback) as rb:
+                    subprocess.run(["/bin/true"], check=True)
+                    # Should not raise, even though callback returns None
+                    rb.poll(timeout_ms=100)
+
+        assert len(events) >= 1, "Events should still be received when callback returns None"
+
+    def test_ringbuf_callback_negative_return_stops_polling(self, ringbuf_bpf_path: Path) -> None:
+        """Callback returning negative stops polling without raising BpfError."""
+        events: list[bytes] = []
+
+        def callback(data: bytes) -> int:
+            events.append(data)
+            return -1  # Signal stop
+
+        with tinybpf.load(ringbuf_bpf_path) as obj:
+            with obj.program("trace_execve").attach():
+                with tinybpf.BpfRingBuffer(obj.maps["events"], callback) as rb:
+                    subprocess.run(["/bin/true"], check=True)
+                    # Should NOT raise BpfError — negative return is a clean user stop
+                    count = rb.poll(timeout_ms=100)
+                    # count is 0 (libbpf returns -1 on early stop, we map to 0)
+                    assert count == 0
+
+        # At least one event was received before stop was triggered
+        assert len(events) >= 1
+
 
 class TestBpfRingBufferTyped:
     """Tests for typed ring buffer events."""

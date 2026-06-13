@@ -174,29 +174,86 @@ class TestTypeValidationLogic:
     """Test type validation logic without needing real BTF."""
 
     def test_size_mismatch_detection(self) -> None:
-        """Validation detects size mismatches."""
+        """Validation raises BtfValidationError on size mismatch."""
+        from tinybpf._object import BpfObject
 
-        # Create a Python struct
         class Event(ctypes.Structure):
             _fields_ = [("pid", ctypes.c_uint32), ("tid", ctypes.c_uint32)]
 
-        # Create a BTF type with different size
+        # BTF says the struct is 24 bytes; Python struct is 8 bytes
         btf_type = tinybpf.BtfType(
             name="event",
             kind=tinybpf.BtfKind.STRUCT,
-            size=24,  # Mismatch: Python struct is 8 bytes
+            size=24,
+            fields=None,
+        )
+
+        # _validate_python_type doesn't use self, so we can call it unbound
+        with pytest.raises(tinybpf.BtfValidationError, match="Size mismatch"):
+            BpfObject._validate_python_type(None, Event, btf_type, False)  # type: ignore[arg-type]
+
+    def test_field_count_mismatch_detection(self) -> None:
+        """Validation raises BtfValidationError on field count mismatch."""
+        from tinybpf._object import BpfObject
+
+        class TwoFields(ctypes.Structure):
+            _fields_ = [("pid", ctypes.c_uint32), ("tid", ctypes.c_uint32)]
+
+        # BTF says three fields but Python struct has two
+        btf_type = tinybpf.BtfType(
+            name="event",
+            kind=tinybpf.BtfKind.STRUCT,
+            size=8,  # matches TwoFields
             fields=(
                 tinybpf.BtfField(name="pid", offset=0, size=4),
                 tinybpf.BtfField(name="tid", offset=4, size=4),
-                tinybpf.BtfField(name="comm", offset=8, size=16),
+                tinybpf.BtfField(name="extra", offset=8, size=4),
             ),
         )
 
-        # We can't call _validate_python_type directly without BpfObject,
-        # but we can verify the BtfType and struct sizes don't match
-        assert ctypes.sizeof(Event) == 8
-        assert btf_type.size == 24
-        # The validation would fail due to size mismatch
+        with pytest.raises(tinybpf.BtfValidationError, match="Field count mismatch"):
+            BpfObject._validate_python_type(None, TwoFields, btf_type, False)  # type: ignore[arg-type]
+
+    def test_field_name_mismatch_detection(self) -> None:
+        """Validation raises BtfValidationError on field name mismatch."""
+        from tinybpf._object import BpfObject
+
+        class MyEvent(ctypes.Structure):
+            _fields_ = [("pid", ctypes.c_uint32), ("tid", ctypes.c_uint32)]
+
+        # BTF has different field names
+        btf_type = tinybpf.BtfType(
+            name="event",
+            kind=tinybpf.BtfKind.STRUCT,
+            size=8,
+            fields=(
+                tinybpf.BtfField(name="process_id", offset=0, size=4),
+                tinybpf.BtfField(name="thread_id", offset=4, size=4),
+            ),
+        )
+
+        with pytest.raises(tinybpf.BtfValidationError, match="Field name mismatch"):
+            BpfObject._validate_python_type(None, MyEvent, btf_type, True)  # type: ignore[arg-type]
+
+    def test_matching_type_passes_validation(self) -> None:
+        """Validation passes when Python type matches BTF type."""
+        from tinybpf._object import BpfObject
+
+        class MyEvent(ctypes.Structure):
+            _fields_ = [("pid", ctypes.c_uint32), ("tid", ctypes.c_uint32)]
+
+        btf_type = tinybpf.BtfType(
+            name="event",
+            kind=tinybpf.BtfKind.STRUCT,
+            size=8,
+            fields=(
+                tinybpf.BtfField(name="pid", offset=0, size=4),
+                tinybpf.BtfField(name="tid", offset=4, size=4),
+            ),
+        )
+
+        # Should not raise
+        BpfObject._validate_python_type(None, MyEvent, btf_type, True)  # type: ignore[arg-type]
 
     def test_btf_type_with_fields(self) -> None:
         """BtfType can store struct fields."""
