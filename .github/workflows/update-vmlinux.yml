@@ -1,0 +1,124 @@
+name: Update vmlinux.h
+
+# Upstream libbpf/vmlinux.h keeps only the latest kernel version(s) on its
+# main branch, so our pinned vmlinux_<ver>.h eventually 404s and the compile
+# image silently breaks. This job watches upstream and, when a newer version
+# is available, validates it (build the compile image + compile every program)
+# and opens a PR bumping src/tinybpf/.vmlinux-version.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Mondays 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: update-vmlinux
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine current and latest vmlinux.h versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current=$(tr -d '[:space:]' < src/tinybpf/.vmlinux-version)
+
+          # List the kernel versions of the vmlinux_<ver>.h files present for an
+          # architecture on upstream's main branch.
+          list_versions() {
+            gh api "repos/libbpf/vmlinux.h/contents/include/$1?ref=main" --jq '.[].name' \
+              | sed -n 's/^vmlinux_\([0-9][0-9]*\.[0-9][0-9]*\)\.h$/\1/p'
+          }
+          x86=$(list_versions x86)
+          arm=$(list_versions aarch64)
+
+          # The Dockerfile fetches both arches, so only consider versions present
+          # in both; pick the highest.
+          latest=$(comm -12 <(printf '%s\n' "$x86" | sort) <(printf '%s\n' "$arm" | sort) \
+            | sort -V | tail -1)
+
+          if [ -z "$latest" ]; then
+            echo "::error::Could not determine latest vmlinux.h version from upstream (layout changed?)"
+            exit 1
+          fi
+
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already on the latest vmlinux.h ($current)."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream vmlinux.h moved: $current -> $latest"
+          fi
+
+      - name: Apply version bump
+        if: steps.versions.outputs.changed == 'true'
+        env:
+          CURRENT: ${{ steps.versions.outputs.current }}
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$LATEST" > src/tinybpf/.vmlinux-version
+          # Escape dots for the sed patterns (e.g. 6.19 -> 6\.19).
+          current_re=${CURRENT//./\\.}
+          for f in GUIDE.md README.md llms.txt docker/entrypoint.sh; do
+            sed -i "s/kernel ${current_re}/kernel ${LATEST}/g" "$f"
+          done
+          sed -i "s/VMLINUX_VERSION=${current_re}/VMLINUX_VERSION=${LATEST}/g" docker/Dockerfile
+
+      - name: Validate by building the image and compiling all programs
+        if: steps.versions.outputs.changed == 'true'
+        env:
+          LATEST: ${{ steps.versions.outputs.latest }}
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg VMLINUX_VERSION="$LATEST" \
+            --build-arg LIBBPF_VERSION="$(tr -d '[:space:]' < src/tinybpf/.libbpf-version)" \
+            -t tinybpf-compile-candidate docker/
+          # curl -fSL in the Dockerfile already fails the build if a version is
+          # missing for either arch; this confirms the headers actually compile.
+          docker run --rm -v "$PWD:/src" tinybpf-compile-candidate \
+            tests/bpf/*.bpf.c examples/*/*.bpf.c
+
+      - name: Open or update pull request
+        if: steps.versions.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automated/bump-vmlinux
+          base: main
+          delete-branch: true
+          labels: dependencies
+          title: "Bump bundled vmlinux.h to ${{ steps.versions.outputs.latest }}"
+          commit-message: |
+            Bump bundled vmlinux.h to ${{ steps.versions.outputs.latest }}
+
+            Upstream libbpf/vmlinux.h main only keeps the latest kernel
+            version(s); ${{ steps.versions.outputs.current }} was rotated out.
+            Validated by building the compile image and compiling every
+            tests/bpf and examples program against the new headers.
+          body: |
+            Automated bump of the bundled `vmlinux.h` kernel headers used by the compile image.
+
+            - `src/tinybpf/.vmlinux-version`: `${{ steps.versions.outputs.current }}` → `${{ steps.versions.outputs.latest }}`
+            - Upstream [`libbpf/vmlinux.h`](https://github.com/libbpf/vmlinux.h) keeps only the
+              latest kernel version(s) on `main`, so the previous pin eventually 404s and would
+              silently break the compile image.
+
+            **Validation:** this run built the compile image with the new version and compiled
+            every `tests/bpf/*.bpf.c` and `examples/*/*.bpf.c` successfully.
+
+            **Note:** PRs opened by `GITHUB_TOKEN` do not trigger the normal `pull_request` CI.
+            Push an empty commit (or re-run CI) to exercise it. After merge, `build-compile-image`
+            rebuilds `:latest`; then trigger the Release workflow as usual.
