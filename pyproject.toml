@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "tinybpf"
 dynamic = ["version"]
 description = "Minimal Python library for loading and interacting with eBPF programs"
+readme = "README.md"
+authors = [{name = "Greg Clermont"}]
 license = {text = "MIT"}
 requires-python = ">=3.10"
 classifiers = [
@@ -18,6 +20,11 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
+
+[project.urls]
+Homepage = "https://github.com/gregclermont/tinybpf"
+Repository = "https://github.com/gregclermont/tinybpf"
+Documentation = "https://gregclermont.github.io/tinybpf/"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "mypy", "ruff", "pre-commit"]

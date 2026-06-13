@@ -145,11 +145,7 @@ jobs:
 
       - name: Rename wheel for platform
         run: |
-          cd dist
-          for f in *.whl; do
-            newname=$(echo "$f" | sed 's/-py3-none-any\.whl/-py3-none-manylinux_2_28_${{ matrix.arch }}.whl/')
-            mv "$f" "$newname"
-          done
+          wheel tags --platform-tag manylinux_2_28_${{ matrix.arch }} --remove dist/*.whl
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4

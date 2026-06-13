@@ -29,3 +29,6 @@ venv/
 # Compiled eBPF (generated in CI)
 *.bpf.o
 src/tinybpf/_libbpf/libbpf.so.1
+
+# Local setup notes
+*.local.md

@@ -48,6 +48,17 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Check release doesn't exist
+        run: |
+          if gh release view "libbpf-v${{ inputs.libbpf_version }}" &>/dev/null; then
+            echo "Error: Release libbpf-v${{ inputs.libbpf_version }} already exists"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Download x86_64 artifacts
         uses: actions/download-artifact@v4
         with:
