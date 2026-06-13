@@ -12,7 +12,7 @@ import errno
 import os
 import struct
 from collections.abc import Iterator, Mapping
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, overload
 
 from tinybpf._libbpf import bindings
 from tinybpf._types import (
@@ -35,6 +35,18 @@ if TYPE_CHECKING:
 
 KT = TypeVar("KT")
 VT = TypeVar("VT")
+# Method-level TypeVars for typed(), so the returned view's element types
+# reflect the key=/value= arguments rather than the source map's TypeVars.
+KT2 = TypeVar("KT2")
+VT2 = TypeVar("VT2")
+
+# BTF INT encoding flags. The encoding __u32 immediately follows btf_type in
+# memory for KIND_INT types. BTF_INT_ENCODING(VAL) = (VAL & 0x0f000000) >> 24.
+_BTF_INT_SIGNED = 0x1
+
+# Sentinel marking a BTF cache slot as not-yet-resolved (distinct from None,
+# which is a valid resolved result meaning "no BTF available").
+_UNRESOLVED = object()
 
 # Per-CPU map types that require special handling
 _PERCPU_MAP_TYPES = frozenset(
@@ -87,6 +99,14 @@ class BpfMap(Generic[KT, VT]):
         self._closed = False
         self._key_type = key_type
         self._value_type = value_type
+
+        # Lazily-resolved BTF info, cached so per-element conversions during
+        # iteration don't re-run the full BTF resolution walk on every call.
+        # Sentinel _UNRESOLVED distinguishes "not yet computed" from "no BTF".
+        self._btf_key_cache: BtfType | None | object = _UNRESOLVED
+        self._btf_value_cache: BtfType | None | object = _UNRESOLVED
+        self._btf_key_signed: bool | None = None
+        self._btf_value_signed: bool | None = None
 
         if map_ptr is not None:
             # Object-owned map: extract info from libbpf pointer
@@ -169,43 +189,119 @@ class BpfMap(Generic[KT, VT]):
     def btf_key(self) -> BtfType | None:
         """Return BTF type info for map key, or None if no BTF.
 
+        The resolved type is cached on the instance after first access, so
+        repeated conversions during iteration do not re-walk BTF metadata.
+
         Returns:
             BtfType describing the key type, or None if BTF is unavailable.
         """
-        if self._obj is None or self._obj.btf is None:
-            return None
-        if self._ptr is None:
-            return None
-        lib = bindings._get_lib()
-        type_id = lib.bpf_map__btf_key_type_id(self._ptr)
-        if type_id == 0:
-            return None
-        return self._obj._resolve_btf_type(type_id)
+        if self._btf_key_cache is _UNRESOLVED:
+            self._btf_key_cache, self._btf_key_signed = self._resolve_btf(
+                lambda lib: lib.bpf_map__btf_key_type_id(self._ptr)
+            )
+        return self._btf_key_cache  # type: ignore[return-value]
 
     @property
     def btf_value(self) -> BtfType | None:
         """Return BTF type info for map value, or None if no BTF.
 
+        The resolved type is cached on the instance after first access, so
+        repeated conversions during iteration do not re-walk BTF metadata.
+
         Returns:
             BtfType describing the value type, or None if BTF is unavailable.
         """
+        if self._btf_value_cache is _UNRESOLVED:
+            self._btf_value_cache, self._btf_value_signed = self._resolve_btf(
+                lambda lib: lib.bpf_map__btf_value_type_id(self._ptr)
+            )
+        return self._btf_value_cache  # type: ignore[return-value]
+
+    def _resolve_btf(self, type_id_fn: Any) -> tuple[BtfType | None, bool | None]:
+        """Resolve a map BTF type and its INT signedness (uncached).
+
+        Args:
+            type_id_fn: Callable taking the libbpf handle and returning the
+                BTF type id for the key or value.
+
+        Returns:
+            A (BtfType | None, signed | None) tuple. ``signed`` is True/False
+            for INT kinds and None when signedness is not applicable/unknown.
+        """
+        if self._obj is None or self._obj.btf is None or self._ptr is None:
+            return None, None
+        lib = bindings._get_lib()
+        type_id = type_id_fn(lib)
+        if type_id == 0:
+            return None, None
+        btf_type = self._obj._resolve_btf_type(type_id)
+        signed: bool | None = None
+        if btf_type is not None and btf_type.kind == BtfKind.INT:
+            signed = self._btf_int_signed(type_id)
+        return btf_type, signed
+
+    def _btf_int_signed(self, type_id: int) -> bool | None:
+        """Return whether the BTF INT type at type_id is signed.
+
+        The BTF INT encoding is a __u32 stored immediately after the
+        btf_type struct in memory. The signedness lives in the encoding's
+        high byte (BTF_INT_ENCODING). Returns None if it cannot be read.
+        """
         if self._obj is None or self._obj.btf is None:
             return None
-        if self._ptr is None:
-            return None
         lib = bindings._get_lib()
-        type_id = lib.bpf_map__btf_value_type_id(self._ptr)
-        if type_id == 0:
+        btf_type_ptr = lib.btf__type_by_id(self._obj.btf, type_id)
+        if not btf_type_ptr:
             return None
-        return self._obj._resolve_btf_type(type_id)
+        base_addr = ctypes.cast(btf_type_ptr, ctypes.c_void_p).value
+        if base_addr is None:
+            return None
+        encoding = ctypes.c_uint32.from_address(base_addr + ctypes.sizeof(bindings._btf_type)).value
+        return bool(((encoding & 0x0F000000) >> 24) & _BTF_INT_SIGNED)
+
+    @overload
+    def typed(
+        self,
+        *,
+        key: builtins.type[KT2],
+        value: builtins.type[VT2],
+        validate_field_names: bool = ...,
+    ) -> BpfMap[KT2, VT2]: ...
+
+    @overload
+    def typed(
+        self,
+        *,
+        key: builtins.type[KT2],
+        value: None = ...,
+        validate_field_names: bool = ...,
+    ) -> BpfMap[KT2, Any]: ...
+
+    @overload
+    def typed(
+        self,
+        *,
+        key: None = ...,
+        value: builtins.type[VT2],
+        validate_field_names: bool = ...,
+    ) -> BpfMap[Any, VT2]: ...
+
+    @overload
+    def typed(
+        self,
+        *,
+        key: None = ...,
+        value: None = ...,
+        validate_field_names: bool = ...,
+    ) -> BpfMap[Any, Any]: ...
 
     def typed(
         self,
         *,
-        key: builtins.type[KT] | None = None,
-        value: builtins.type[VT] | None = None,
+        key: builtins.type[KT2] | None = None,
+        value: builtins.type[VT2] | None = None,
         validate_field_names: bool = True,
-    ) -> BpfMap[KT, VT]:
+    ) -> BpfMap[Any, Any]:
         """Return a new typed view of this map with BTF validation.
 
         Creates a typed view that auto-converts keys and values during
@@ -241,10 +337,20 @@ class BpfMap(Generic[KT, VT]):
         if key is not None:
             self._validate_type(key, self.btf_key, validate_field_names)
 
+        # For standalone maps the view must own its own fd. Sharing the same
+        # int across two instances (each with its own _closed flag) would let
+        # both close() / __del__ call os.close on it - a double-close that can
+        # later hit an unrelated reused fd. os.dup() gives the view a genuinely
+        # independent fd, so each instance owns and closes exactly one.
+        view_owned_fd: int | None = None
+        if self._owned_fd is not None:
+            self._check_open()
+            view_owned_fd = os.dup(self._owned_fd)
+
         return BpfMap(
             self._ptr,
             self._obj,
-            owned_fd=self._owned_fd,
+            owned_fd=view_owned_fd,
             name=self._name,
             map_type=self._type,
             key_size=self._key_size,
@@ -293,16 +399,45 @@ class BpfMap(Generic[KT, VT]):
         if self._obj is not None and self._obj._closed:
             raise BpfError("Cannot use map after BpfObject is closed")
 
+    def _int_to_bytes(self, value: int, size: int, signed: bool | None, what: str) -> bytes:
+        """Convert a Python int to little-endian bytes, honoring signedness.
+
+        Args:
+            value: The integer to encode.
+            size: Target width in bytes.
+            signed: True/False per the BTF INT type, or None when unknown.
+            what: "key" or "value", used in error messages.
+
+        A negative value is only accepted when the underlying type is signed
+        (or unknown, where we permit it by falling back to signed encoding).
+        For a known-unsigned type a negative value raises a clear ValueError.
+        """
+        if value < 0:
+            if signed is False:
+                raise ValueError(
+                    f"Cannot encode negative {what} {value} for unsigned BTF type of '{self._name}'"
+                )
+            use_signed = True
+        else:
+            use_signed = bool(signed)
+        try:
+            return value.to_bytes(size, byteorder="little", signed=use_signed)
+        except OverflowError as exc:
+            raise ValueError(
+                f"{what.capitalize()} {value} does not fit in {size} bytes for '{self._name}'"
+            ) from exc
+
     def _to_key_bytes(self, key: KT) -> bytes:
         """Convert key to bytes."""
         if isinstance(key, bytes):
             if len(key) != self._key_size:
                 raise ValueError(f"Key size mismatch: got {len(key)}, expected {self._key_size}")
             return key
-        if isinstance(key, ctypes.Structure):
+        if isinstance(key, ctypes.Structure | ctypes._SimpleCData):
             return bytes(key)
         if isinstance(key, int):
-            return key.to_bytes(self._key_size, byteorder="little")
+            signed = self._btf_int_signedness(self._key_type, is_key=True)
+            return self._int_to_bytes(key, self._key_size, signed, "key")
         raise TypeError(f"Cannot convert {type(key).__name__} to key bytes")
 
     def _to_value_bytes(self, value: VT) -> bytes:
@@ -313,22 +448,44 @@ class BpfMap(Generic[KT, VT]):
                     f"Value size mismatch: got {len(value)}, expected {self._value_size}"
                 )
             return value
-        if isinstance(value, ctypes.Structure):
+        if isinstance(value, ctypes.Structure | ctypes._SimpleCData):
             return bytes(value)
         if isinstance(value, int):
-            return value.to_bytes(self._value_size, byteorder="little")
+            signed = self._btf_int_signedness(self._value_type, is_key=False)
+            return self._int_to_bytes(value, self._value_size, signed, "value")
         raise TypeError(f"Cannot convert {type(value).__name__} to value bytes")
+
+    def _btf_int_signedness(
+        self, explicit_type: builtins.type | None, *, is_key: bool
+    ) -> bool | None:
+        """Return signedness for a plain-int key/value, or None if unknown.
+
+        Only relevant when no explicit ctypes type is given (plain ``int``):
+        ctypes simple types like c_int32 carry their own signedness and are
+        handled by ctypes directly. Triggers BTF resolution (cached) to learn
+        whether the map's INT type is signed.
+        """
+        if explicit_type is not None and explicit_type is not int:
+            return None
+        # Accessing the property populates the cached signedness fields.
+        _ = self.btf_key if is_key else self.btf_value
+        return self._btf_key_signed if is_key else self._btf_value_signed
 
     def _from_key_bytes(self, data: bytes) -> KT:
         """Convert bytes to key type."""
         if self._key_type is not None:
             # Explicit type provided - use it
             if self._key_type is int:
-                return int.from_bytes(data, byteorder="little")  # type: ignore
+                signed = bool(self._btf_int_signedness(self._key_type, is_key=True))
+                return int.from_bytes(data, byteorder="little", signed=signed)  # type: ignore
             if issubclass(self._key_type, ctypes.Structure):
                 return self._key_type.from_buffer_copy(data)
+            if issubclass(self._key_type, ctypes._SimpleCData):
+                # ctypes simple types (c_int32, c_uint64, ...) carry their own
+                # signedness; return the unwrapped Python scalar.
+                return self._key_type.from_buffer_copy(data).value
             raise TypeError(
-                f"typed() key must be int or ctypes.Structure, not {self._key_type.__name__}. "
+                f"typed() key must be int or ctypes type, not {self._key_type.__name__}. "
                 f"Use int for scalar types."
             )
 
@@ -336,7 +493,8 @@ class BpfMap(Generic[KT, VT]):
         btf_type = self.btf_key
         if btf_type is not None:
             if btf_type.kind == BtfKind.INT:
-                return int.from_bytes(data, byteorder="little")  # type: ignore
+                signed = bool(self._btf_key_signed)
+                return int.from_bytes(data, byteorder="little", signed=signed)  # type: ignore
             if btf_type.kind == BtfKind.FLOAT:
                 fmt = "f" if len(data) == 4 else "d"
                 return struct.unpack(fmt, data)[0]
@@ -349,11 +507,15 @@ class BpfMap(Generic[KT, VT]):
         if self._value_type is not None:
             # Explicit type provided - use it
             if self._value_type is int:
-                return int.from_bytes(data, byteorder="little")  # type: ignore
+                signed = bool(self._btf_int_signedness(self._value_type, is_key=False))
+                return int.from_bytes(data, byteorder="little", signed=signed)  # type: ignore
             if issubclass(self._value_type, ctypes.Structure):
                 return self._value_type.from_buffer_copy(data)
+            if issubclass(self._value_type, ctypes._SimpleCData):
+                # ctypes simple types carry their own signedness.
+                return self._value_type.from_buffer_copy(data).value
             raise TypeError(
-                f"typed() value must be int or ctypes.Structure, not {self._value_type.__name__}. "
+                f"typed() value must be int or ctypes type, not {self._value_type.__name__}. "
                 f"Use int for scalar types."
             )
 
@@ -361,7 +523,8 @@ class BpfMap(Generic[KT, VT]):
         btf_type = self.btf_value
         if btf_type is not None:
             if btf_type.kind == BtfKind.INT:
-                return int.from_bytes(data, byteorder="little")  # type: ignore
+                signed = bool(self._btf_value_signed)
+                return int.from_bytes(data, byteorder="little", signed=signed)  # type: ignore
             if btf_type.kind == BtfKind.FLOAT:
                 fmt = "f" if len(data) == 4 else "d"
                 return struct.unpack(fmt, data)[0]
@@ -758,7 +921,9 @@ def open_pinned_map(
     """
     lib = bindings._get_lib()
 
-    # Open the pinned object - returns fd or negative errno
+    # Open the pinned object - returns fd or negative errno. bpf_obj_get works
+    # for any pinned object (map, prog, link), so the fd is not guaranteed to
+    # be a map yet.
     fd = lib.bpf_obj_get(path.encode("utf-8"))
     if fd < 0:
         _check_err(fd, f"open pinned map '{path}'")
@@ -775,6 +940,23 @@ def open_pinned_map(
     if ret < 0:
         os.close(fd)
         _check_err(ret, f"get info for pinned map '{path}'")
+
+    # Verify the fd really is a map before trusting the parsed info (the same
+    # call works for pinned progs/links, whose info would be misread through
+    # _BpfMapInfoKernel as garbage). A map-only syscall (get_next_key with no
+    # previous key) returns 0 or -ENOENT (empty map) for a real map, but fails
+    # cleanly (e.g. -EINVAL) on a prog/link fd. The kernel rejects a non-map fd
+    # before touching the key buffer, so sizing it from the parsed key_size is
+    # safe.
+    probe_key = ctypes.create_string_buffer(max(info.key_size, 1))
+    probe_ret = lib.bpf_map_get_next_key(fd, None, ctypes.cast(probe_key, ctypes.c_void_p))
+    if probe_ret < 0 and abs(probe_ret) != errno.ENOENT:
+        os.close(fd)
+        raise BpfError(
+            f"Pinned object at '{path}' is not a usable BPF map "
+            f"(get_next_key failed: {bindings.libbpf_strerror(abs(probe_ret))})",
+            errno=abs(probe_ret),
+        )
 
     return BpfMap(
         owned_fd=fd,

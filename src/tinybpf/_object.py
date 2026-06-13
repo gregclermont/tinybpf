@@ -126,7 +126,29 @@ class BpfObject:
         Raises:
             KeyError: If program not found.
         """
-        return self._programs[name]
+        try:
+            return self._programs[name]
+        except KeyError:
+            available = ", ".join(sorted(self._programs)) or "(none)"
+            raise KeyError(f"Program '{name}' not found. Available programs: {available}") from None
+
+    def map(self, name: str) -> BpfMap[Any, Any]:
+        """Get a map by name.
+
+        Args:
+            name: The map name.
+
+        Returns:
+            The BpfMap instance.
+
+        Raises:
+            KeyError: If map not found.
+        """
+        try:
+            return self._maps[name]
+        except KeyError:
+            available = ", ".join(sorted(self._maps)) or "(none)"
+            raise KeyError(f"Map '{name}' not found. Available maps: {available}") from None
 
     @property
     def btf(self) -> Any | None:
@@ -435,9 +457,21 @@ def load(path: str | Path) -> BpfObject:
 
     lib = bindings._get_lib()
 
-    # Open the object file
-    obj_ptr = lib.bpf_object__open_file(str(path).encode("utf-8"), None)
-    _check_ptr(obj_ptr, f"open '{path}'")
+    # Open the object file, capturing libbpf's stderr output which contains
+    # detailed error info (e.g. ELF parsing or CO-RE errors).
+    with bindings.capture_libbpf_output():
+        obj_ptr = lib.bpf_object__open_file(str(path).encode("utf-8"), None)
+    open_log = bindings.get_captured_output().strip() or None
+    try:
+        _check_ptr(obj_ptr, f"open '{path}'")
+    except BpfError as exc:
+        # Re-raise with the captured libbpf output attached so the message
+        # includes the detailed log (BpfError bakes the log into its message).
+        raise BpfError(
+            str(exc).split("\n\nlibbpf output:")[0],
+            errno=exc.errno,
+            libbpf_log=open_log,
+        ) from None
 
     # Load the object into the kernel, capturing libbpf's stderr output
     # which contains detailed error info (verifier log, CO-RE errors, etc.)
@@ -451,4 +485,9 @@ def load(path: str | Path) -> BpfObject:
         libbpf_log = bindings.get_captured_output().strip() or None
         raise BpfError(f"load '{path}' failed: {msg}", errno=err_abs, libbpf_log=libbpf_log)
 
-    return BpfObject(obj_ptr, path)
+    # Guard against leaking obj_ptr if BpfObject construction raises.
+    try:
+        return BpfObject(obj_ptr, path)
+    except BaseException:
+        lib.bpf_object__close(obj_ptr)
+        raise

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
-import fcntl
 import os
 import sys
 import threading
@@ -17,6 +16,12 @@ if TYPE_CHECKING:
 
 _lib: ctypes.CDLL | None = None
 _initialized: bool = False
+
+# Serializes library initialization (init()/_get_lib()) against the
+# two-thread init race, and stderr captures against each other (the dup2
+# on fd 2 is process-wide).
+_init_lock = threading.Lock()
+_capture_lock = threading.Lock()
 
 
 # Opaque pointer types for libbpf structures
@@ -349,16 +354,22 @@ def init(libbpf_path: str | Path | None = None) -> None:
     """
     global _lib, _initialized
 
-    if _initialized:
-        raise RuntimeError("tinybpf already initialized. Call init() before any other function.")
+    with _init_lock:
+        if _initialized:
+            raise RuntimeError(
+                "tinybpf already initialized. Call init() before any other function."
+            )
 
-    if libbpf_path is not None:
-        _lib = ctypes.CDLL(str(libbpf_path))
-    else:
-        _lib = _load_bundled()
+        if libbpf_path is not None:
+            lib = ctypes.CDLL(str(libbpf_path))
+        else:
+            lib = _load_bundled()
 
-    _setup_function_signatures(_lib)
-    _initialized = True
+        _setup_function_signatures(lib)
+        # Publish the fully-configured handle only after setup succeeds, so
+        # a concurrent _get_lib() never observes a partially-initialized lib.
+        _lib = lib
+        _initialized = True
 
 
 def _load_bundled() -> ctypes.CDLL:
@@ -388,7 +399,13 @@ def _load_bundled() -> ctypes.CDLL:
 def _get_lib() -> ctypes.CDLL:
     """Get library handle, initializing if needed."""
     if not _initialized:
-        init()
+        # Guard the check-then-init against a concurrent initializer. init()
+        # takes _init_lock itself and raises if already initialized, so only
+        # the first thread to win the race calls it.
+        with _init_lock:
+            already_initialized = _initialized
+        if not already_initialized:
+            init()
     assert _lib is not None
     return _lib
 
@@ -433,54 +450,75 @@ def capture_libbpf_output() -> Iterator[None]:
             log = get_captured_output()
             raise BpfError(f"load failed", libbpf_log=log)
 
-    Note: This uses file descriptor redirection which is thread-safe for the
-    capture itself, but the captured output is stored in thread-local storage.
+    Note: This redirects process-wide stderr (file descriptor 2) for the
+    duration of the body, so it is *not* thread-safe in the sense of being
+    isolated per-thread: stderr writes from other threads during the body are
+    captured too. Concurrent captures are serialized by a module-level lock to
+    avoid racing on the fd-2 redirect/restore. A background thread drains the
+    pipe while the body runs so libbpf can never block on a full pipe buffer
+    (verifier/CO-RE logs routinely exceed the ~64KB pipe capacity). The
+    captured output is stored in thread-local storage.
     """
-    # Initialize thread-local captured output
-    _captured_output.value = ""
+    with _capture_lock:
+        # Initialize thread-local captured output
+        _captured_output.value = ""
 
-    # Save original stderr fd (fd 2)
-    original_stderr_fd = 2
-    saved_stderr_fd = os.dup(original_stderr_fd)
+        # Save original stderr fd (fd 2)
+        original_stderr_fd = 2
+        saved_stderr_fd = os.dup(original_stderr_fd)
 
-    # Create a pipe for capturing
-    read_fd, write_fd = os.pipe()
+        # Create a pipe for capturing
+        read_fd, write_fd = os.pipe()
 
-    try:
-        # Redirect stderr (fd 2) to the write end of the pipe
-        os.dup2(write_fd, original_stderr_fd)
-        os.close(write_fd)  # Close our copy, original_stderr_fd now owns it
+        # Drain the read end concurrently so the writer (libbpf, inside the
+        # body) never blocks on a full pipe buffer.
+        chunks: list[bytes] = []
+
+        def _drain() -> None:
+            while True:
+                try:
+                    chunk = os.read(read_fd, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+
+        reader = threading.Thread(target=_drain, daemon=True)
+        reader_started = False
 
         try:
-            yield
-        finally:
-            # Restore original stderr - this closes the pipe's write end
-            # which signals EOF to any reader
-            os.dup2(saved_stderr_fd, original_stderr_fd)
+            # Redirect stderr (fd 2) to the write end of the pipe
+            os.dup2(write_fd, original_stderr_fd)
+            os.close(write_fd)  # Close our copy, original_stderr_fd now owns it
+            write_fd = -1
 
-            # Now read all captured output from the pipe
-            # Set read_fd to non-blocking to avoid hanging if empty
-            flags = fcntl.fcntl(read_fd, fcntl.F_GETFL)
-            fcntl.fcntl(read_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            reader.start()
+            reader_started = True
 
-            chunks = []
             try:
-                while True:
-                    chunk = os.read(read_fd, 65536)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-            except BlockingIOError:
-                pass  # No more data available
+                yield
+            finally:
+                # Restore original stderr - this closes the pipe's write end
+                # which signals EOF to the draining reader.
+                os.dup2(saved_stderr_fd, original_stderr_fd)
+                # Wait for the reader to consume everything up to EOF.
+                reader.join()
+                _captured_output.value = b"".join(chunks).decode("utf-8", errors="replace")
 
-            _captured_output.value = b"".join(chunks).decode("utf-8", errors="replace")
-
-    finally:
-        # Clean up file descriptors
-        with suppress(OSError):
-            os.close(read_fd)
-        with suppress(OSError):
-            os.close(saved_stderr_fd)
+        finally:
+            # Clean up file descriptors. If we bailed before starting the
+            # reader, the write end may still be open; close it first so the
+            # reader (if somehow running) sees EOF, then join it.
+            with suppress(OSError):
+                if write_fd != -1:
+                    os.close(write_fd)
+            if reader_started:
+                reader.join()
+            with suppress(OSError):
+                os.close(read_fd)
+            with suppress(OSError):
+                os.close(saved_stderr_fd)
 
 
 def get_captured_output() -> str:

@@ -114,9 +114,9 @@ class BpfRingBuffer(Generic[T]):
 
         Args:
             map: Optional ring buffer map to add initially.
-            callback: Event handler for map's events. Return 0 to continue
-                     polling, non-zero to stop. If None, use iteration to
-                     consume events.
+            callback: Event handler for map's events. Return 0 (or None) to
+                     continue polling, return a negative value to stop
+                     polling. If None, use iteration to consume events.
 
                      Callbacks are invoked synchronously during poll();
                      long-running callbacks can cause the kernel buffer to fill
@@ -187,6 +187,8 @@ class BpfRingBuffer(Generic[T]):
         self._objs: set[BpfObject] = set()  # All parent objects for use-after-close
         self._callbacks: list[Any] = []  # Keep ctypes callbacks alive
         self._stored_exception: BaseException | None = None
+        self._user_stop: bool = False  # Set when callback returned negative to stop
+        self._poll_async_lock: asyncio.Lock = asyncio.Lock()  # Serialise poll_async callers
 
         # Mode tracking: None until first add, then "callback" or "iterator"
         self._mode: str | None = None
@@ -343,8 +345,9 @@ class BpfRingBuffer(Generic[T]):
 
         Args:
             map: Ring buffer map (must be BPF_MAP_TYPE_RINGBUF).
-            callback: Event handler. Return 0 to continue polling, non-zero
-                     to stop. If None, events are consumed via iteration.
+            callback: Event handler. Return 0 (or None) to continue polling,
+                     return a negative value to stop polling. If None,
+                     events are consumed via iteration.
                      See __init__ docstring for timing considerations.
             as_memoryview: If True, callback receives memoryview instead of bytes.
                      If None, uses the instance default from constructor.
@@ -440,7 +443,13 @@ class BpfRingBuffer(Generic[T]):
                         array_type = ctypes.c_char * size
                         array_ptr = ctypes.cast(data, ctypes.POINTER(array_type))
                         mv = memoryview(array_ptr.contents).cast("B")
-                        return callback(mv)
+                        ret = callback(mv)
+                        # Coerce None→0 (user returning None means "continue")
+                        if ret is None:
+                            return 0
+                        if ret < 0:
+                            self._user_stop = True
+                        return ret
                     except BaseException as e:
                         self._stored_exception = e
                         return -1  # Stop polling
@@ -452,7 +461,13 @@ class BpfRingBuffer(Generic[T]):
                     try:
                         event_data = ctypes.string_at(data, size)
                         typed_event = _from_event_bytes(event_data, map_event_type)
-                        return callback(typed_event)
+                        ret = callback(typed_event)
+                        # Coerce None→0 (user returning None means "continue")
+                        if ret is None:
+                            return 0
+                        if ret < 0:
+                            self._user_stop = True
+                        return ret
                     except BaseException as e:
                         self._stored_exception = e
                         return -1  # Stop polling
@@ -554,10 +569,18 @@ class BpfRingBuffer(Generic[T]):
         if self._ptr is None:
             raise BpfError("No maps added to ring buffer")
         lib = bindings._get_lib()
+        self._user_stop = False
         ret = lib.ring_buffer__poll(self._ptr, timeout_ms)
         self._check_and_reraise()
         if ret < 0 and abs(ret) == errno.EINTR and ignore_eintr:
             return 0
+        # If the callback returned a negative value to stop, that's a clean stop —
+        # don't raise an error, just return 0 (count of events before stop is lost
+        # since libbpf returns -1, but no exception to propagate).
+        if ret < 0 and self._user_stop:
+            self._user_stop = False
+            return 0
+        self._user_stop = False
         _check_err(ret, "ring_buffer__poll")
         return ret
 
@@ -577,8 +600,13 @@ class BpfRingBuffer(Generic[T]):
         if self._ptr is None:
             raise BpfError("No maps added to ring buffer")
         lib = bindings._get_lib()
+        self._user_stop = False
         ret = lib.ring_buffer__consume(self._ptr)
         self._check_and_reraise()
+        if ret < 0 and self._user_stop:
+            self._user_stop = False
+            return 0
+        self._user_stop = False
         _check_err(ret, "ring_buffer__consume")
         return ret
 
@@ -608,36 +636,40 @@ class BpfRingBuffer(Generic[T]):
             # Non-blocking: just consume
             return self.consume()
 
-        loop = asyncio.get_running_loop()
-        fd = self.epoll_fd()
+        # Serialise concurrent callers: if two coroutines call poll_async()
+        # simultaneously, loop.add_reader() would silently replace the first
+        # callback, leaving the first future unresolved forever.
+        async with self._poll_async_lock:
+            loop = asyncio.get_running_loop()
+            fd = self.epoll_fd()
 
-        # Create future to wait on fd readability
-        future: asyncio.Future[None] = loop.create_future()
+            # Create future to wait on fd readability
+            future: asyncio.Future[None] = loop.create_future()
 
-        def on_readable() -> None:
-            if not future.done():
-                loop.remove_reader(fd)
-                future.set_result(None)
+            def on_readable() -> None:
+                if not future.done():
+                    loop.remove_reader(fd)
+                    future.set_result(None)
 
-        loop.add_reader(fd, on_readable)
+            loop.add_reader(fd, on_readable)
 
-        try:
-            if timeout_ms > 0:
-                try:
-                    await asyncio.wait_for(future, timeout=timeout_ms / 1000)
-                except asyncio.TimeoutError:
-                    return 0
-            else:
-                await future
-
-            # Events available, consume them
-            return self.consume()
-        finally:
-            # Ensure reader is removed even on cancellation
             try:
-                loop.remove_reader(fd)
-            except (ValueError, KeyError):
-                pass  # Already removed
+                if timeout_ms > 0:
+                    try:
+                        await asyncio.wait_for(future, timeout=timeout_ms / 1000)
+                    except asyncio.TimeoutError:
+                        return 0
+                else:
+                    await future
+
+                # Events available, consume them
+                return self.consume()
+            finally:
+                # Ensure reader is removed even on cancellation
+                try:
+                    loop.remove_reader(fd)
+                except (ValueError, KeyError):
+                    pass  # Already removed
 
     def __aiter__(self) -> _AsyncRingBufferIterator[T]:
         """Return async iterator over events.
@@ -777,13 +809,19 @@ class _AsyncRingBufferIterator(Generic[T]):
         """Get next event, waiting if necessary."""
         rb = self._rb
 
-        # Check if ring buffer is still valid
-        rb._check_open()
-
-        # Return queued event if available (discard map_name for backward compat)
+        # Drain queued events FIRST — even if the buffer has been closed,
+        # events that arrived before close are still available.
         if rb._event_queue:
             _map_name, data = rb._event_queue.popleft()
             return _from_event_bytes(data, rb._event_type)
+
+        # Queue is empty; now check if the buffer is still open.
+        # If closed, stop iteration cleanly (don't raise BpfError).
+        if rb._closed:
+            raise StopAsyncIteration
+
+        # Check parent object liveness (raises BpfError if parent closed)
+        rb._check_open()
 
         # Wait for events
         while True:
@@ -811,14 +849,19 @@ class _TaggedRingBufferIterator(Generic[T]):
         """Get next tagged event, waiting if necessary."""
         rb = self._rb
 
-        # Check if ring buffer is still valid
-        rb._check_open()
-
-        # Return queued event if available
+        # Drain queued events FIRST — even if the buffer has been closed,
+        # events that arrived before close are still available.
         if rb._event_queue:
             map_name, data = rb._event_queue.popleft()
             typed_data = _from_event_bytes(data, rb._event_type)
             return RingBufferEvent(map_name=map_name, data=typed_data)
+
+        # Queue is empty; now check if the buffer is still open.
+        if rb._closed:
+            raise StopAsyncIteration
+
+        # Check parent object liveness (raises BpfError if parent closed)
+        rb._check_open()
 
         # Wait for events
         while True:
@@ -956,7 +999,9 @@ class BpfPerfBuffer(Generic[T]):
                 typed_event = _from_event_bytes(event_data, self._event_type, strict_size=False)
                 self._user_sample_callback(cpu, typed_event)
             except BaseException as e:
-                self._stored_exception = e
+                # Guard: only store the first exception (preserve root cause)
+                if self._stored_exception is None:
+                    self._stored_exception = e
 
         def _lost_wrapper(ctx: Any, cpu: int, lost_cnt: int) -> None:
             if self._user_lost_callback is not None:
