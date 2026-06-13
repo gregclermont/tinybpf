@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.10"
 # dependencies = [
-#     "tinybpf>=0.0.1",
+#     "tinybpf>=0.2",
 # ]
 #
 # [[tool.uv.index]]
@@ -20,7 +20,7 @@ class ProcessEvent(ctypes.Structure):
     _fields_ = [
         ("timestamp", ctypes.c_uint64),
         ("pid", ctypes.c_uint32),
-        ("tgid", ctypes.c_uint32),
+        ("tid", ctypes.c_uint32),
         ("uid", ctypes.c_uint32),
         ("gid", ctypes.c_uint32),
         ("comm", ctypes.c_char * 16),
@@ -31,7 +31,7 @@ def handle_event(event: ProcessEvent) -> int:
     """Callback receives ProcessEvent directly - no from_buffer_copy needed."""
     ts_ms = event.timestamp / 1_000_000
     print(
-        f"{ts_ms:>12.3f} pid={event.pid:<6} tgid={event.tgid:<6} "
+        f"{ts_ms:>12.3f} pid={event.pid:<6} tid={event.tid:<6} "
         f"uid={event.uid:<5} gid={event.gid:<5} {event.comm.decode()}"
     )
     return 0
@@ -55,7 +55,7 @@ def main() -> None:
             obj.maps["events"], handle_event, event_type=ProcessEvent
         )
 
-        print(f"{'TIME (ms)':>12} {'PID':<6} {'TGID':<6} {'UID':<5} {'GID':<5} COMM")
+        print(f"{'TIME (ms)':>12} {'PID':<6} {'TID':<6} {'UID':<5} {'GID':<5} COMM")
         print("-" * 60)
         try:
             while True:

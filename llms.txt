@@ -9,7 +9,7 @@ uv add tinybpf --index https://gregclermont.github.io/tinybpf
 pip install tinybpf --extra-index-url https://gregclermont.github.io/tinybpf
 ```
 
-Requires Linux 5.8+ (for ring buffers; basic features work on older kernels), libelf, root/CAP_BPF. Wheels: manylinux_2_28 x86_64/aarch64. Source distribution also available for use with system libbpf (1.0+): `uv add --no-binary tinybpf` or `pip install --no-binary tinybpf`, then `tinybpf.init("/usr/lib/.../libbpf.so.1")`.
+Requires Linux 5.8+ (for ring buffers; basic features work on older kernels), libelf, root/CAP_BPF. Wheels: manylinux_2_28 x86_64/aarch64. Source distribution also available for use with system libbpf (1.4.0+): `uv add --no-binary tinybpf` or `pip install --no-binary tinybpf`, then `tinybpf.init("/usr/lib/.../libbpf.so.1")`.
 
 ## Detailed Docs
 
@@ -28,6 +28,7 @@ with tinybpf.load("program.bpf.o") as obj:
     obj.programs  # Dict-like: ProgramCollection
     obj.maps      # Dict-like: MapCollection
     obj.program("name")  # -> BpfProgram
+    obj.map("name")      # -> BpfMap
 
 # Type registration - register Python types for BTF validation
 obj.register_type("event", Event)  # validate and register ctypes.Structure
@@ -88,9 +89,17 @@ for key, stats in stats_map.items():  # iterate with typed keys and values
 map.btf_key   # -> BtfType or None (BTF type info for key)
 map.btf_value # -> BtfType or None (BTF type info for value)
 
+# Per-CPU maps (PERCPU_ARRAY, PERCPU_HASH, LRU_PERCPU_HASH, PERCPU_CGROUP_STORAGE)
+map.is_percpu                    # True if per-CPU map type
+map.lookup_percpu(key)           # -> list[V] (one value per CPU) or None if not found
+map.lookup_percpu_sum(key)       # -> int|float sum across CPUs, or None; requires numeric values
+map.items_percpu()               # iterator yielding (key, list[V]) pairs
+# Note: lookup()/update() raise TypeError on per-CPU maps; write from BPF side
+
 # Keys/values: bytes, int, float (auto via BTF), or ctypes.Structure
 
 # BpfRingBuffer - stream events from BPF_MAP_TYPE_RINGBUF
+# Callback contract: return None or 0 to continue; return a negative value to stop polling.
 rb = BpfRingBuffer(map, callback=lambda data: ...)  # callback receives bytes
 rb = BpfRingBuffer(map, callback, event_type=Event)  # callback receives Event (no from_buffer_copy needed)
 rb = BpfRingBuffer(map, callback, event_type=Event, validate_btf_struct="event")  # BTF validation

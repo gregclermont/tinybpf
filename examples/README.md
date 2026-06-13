@@ -18,7 +18,13 @@ tinybpf run-elevated main.py
 
 To compile all examples at once: `make compile` from the repo root.
 
-Each script declares its dependencies inline, so `uv run` installs tinybpf automatically on first run.
+Each script declares its dependencies inline (PEP 723). To have `uv` resolve and install dependencies automatically, run as root via:
+
+```bash
+sudo $(which uv) run main.py
+```
+
+`tinybpf run-elevated main.py` is a convenience wrapper that runs `sudo python main.py` with your current interpreter — it bypasses PEP 723 dependency resolution, so tinybpf must already be installed in the active environment.
 
 ## Examples
 

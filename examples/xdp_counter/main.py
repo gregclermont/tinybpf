@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.10"
 # dependencies = [
-#     "tinybpf>=0.0.1",
+#     "tinybpf>=0.2",
 # ]
 #
 # [[tool.uv.index]]

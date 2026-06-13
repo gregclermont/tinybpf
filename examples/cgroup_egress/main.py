@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "tinybpf",
+#     "tinybpf>=0.2",
 # ]
 #
 # [[tool.uv.index]]

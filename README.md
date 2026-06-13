@@ -49,7 +49,7 @@ tinybpf.init("/usr/lib/x86_64-linux-gnu/libbpf.so.1")  # Debian/Ubuntu
 # tinybpf.init("/usr/lib64/libbpf.so.1")  # Fedora/RHEL
 ```
 
-Requires libbpf 1.0+.
+Requires libbpf 1.4.0+.
 </details>
 
 ## Usage
@@ -91,6 +91,7 @@ for key, event in obj.maps["events"].typed(value=Event).items():
 - `obj.programs` - Dict-like access to programs by name
 - `obj.maps` - Dict-like access to maps by name
 - `obj.program(name)` - Get program by name
+- `obj.map(name)` - Get map by name
 - Context manager support (`with` statement)
 
 ### Type Registration
@@ -140,7 +141,13 @@ Dict-like interface:
 - `map[key]`, `map[key] = value`, `del map[key]`
 - `key in map`, `for key in map`
 - `map.keys()`, `map.values()`, `map.items()`
-- `map.lookup(key)`, `map.update(key, value, flags)`, `map.delete(key)`
+- `map.lookup(key)`, `map.get(key, default=None)`, `map.update(key, value, flags)`, `map.delete(key)`
+
+Per-CPU maps (`BpfMapType.PERCPU_ARRAY`, `PERCPU_HASH`, etc.):
+- `map.is_percpu` - `True` if map is a per-CPU type
+- `map.lookup_percpu(key)` - Returns `list[V]` (one value per CPU), or `None` if key not found
+- `map.lookup_percpu_sum(key)` - Sums values across all CPUs; requires numeric value type
+- `map.items_percpu()` - Iterates `(key, list[V])` pairs
 
 Typed access:
 
@@ -181,13 +188,15 @@ rb.poll(timeout_ms=1000)
 - Iterator mode: omit callback, use `for data in rb` after `poll()`
 - Context manager support
 
+Callback contract: return `None` or `0` to continue polling; return a negative value to stop polling.
+
 Typed events with auto-conversion:
 
 ```python
 class Event(ctypes.Structure):
     _fields_ = [("pid", ctypes.c_uint32), ("comm", ctypes.c_char * 16)]
 
-def handle(event: Event):
+def handle(event: Event) -> None:
     print(event.pid)
 
 rb = BpfRingBuffer(obj.maps["events"], handle, event_type=Event)

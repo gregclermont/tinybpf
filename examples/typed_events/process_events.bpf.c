@@ -6,7 +6,7 @@
 struct process_event {
     __u64 timestamp;
     __u32 pid;
-    __u32 tgid;
+    __u32 tid;
     __u32 uid;
     __u32 gid;
     char comm[16];
@@ -34,7 +34,7 @@ int trace_execve(void *ctx)
 
     e->timestamp = bpf_ktime_get_ns();
     e->pid = pid_tgid >> 32;
-    e->tgid = pid_tgid & 0xFFFFFFFF;
+    e->tid = pid_tgid & 0xFFFFFFFF;
     e->uid = uid_gid & 0xFFFFFFFF;
     e->gid = uid_gid >> 32;
     bpf_get_current_comm(&e->comm, sizeof(e->comm));

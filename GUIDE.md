@@ -52,7 +52,7 @@ CO-RE (Compile Once, Run Everywhere) allows BPF programs compiled against one ke
 
 The Docker image bundles `vmlinux.h` from the official [libbpf/vmlinux.h](https://github.com/libbpf/vmlinux.h) repository (kernel 6.18). This is the same approach used by bcc/libbpf-tools and other production BPF tooling.
 
-Supported architectures: x86_64, aarch64, arm, riscv64, s390x, ppc64le, loongarch64.
+Bundled `vmlinux.h` covers x86_64 and aarch64. For other architectures, provide a custom vmlinux.h; see [Custom vmlinux.h](#custom-vmlinuxh) below.
 
 ### When CO-RE Relocations Fail
 
@@ -235,7 +235,8 @@ class ExitEvent(ctypes.Structure):
         ("exit_code", ctypes.c_int32),
     ]
 
-def handle(data: bytes):
+def handle(data: bytes) -> None:
+    # Return None or 0 to continue polling; return a negative value to stop.
     event_type = data[8]  # Read discriminator at known offset
     if event_type == EVENT_EXEC:
         event = ExecEvent.from_buffer_copy(data)

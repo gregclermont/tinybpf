@@ -69,7 +69,7 @@ make compile   # Compile eBPF programs
 Event structs for ring/perf buffers must be explicitly anchored in BTF:
 
 ```c
-struct event _event_anchor __attribute__((unused));
+struct event _event_btf __attribute__((unused));
 ```
 
 ### Inspecting BTF
