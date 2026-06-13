@@ -8,7 +8,7 @@ Example:
     ...         print(key, value)
 """
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 
 from tinybpf._buffers import BpfPerfBuffer, BpfRingBuffer
 from tinybpf._libbpf import init, libbpf_version
