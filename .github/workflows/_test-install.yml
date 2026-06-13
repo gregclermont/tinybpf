@@ -41,6 +41,6 @@ jobs:
           INDEX_URL: ${{ inputs.index-url }}
         run: |
           uv venv --quiet --python ${{ matrix.python-version }}
-          uv pip install --quiet "tinybpf==$VERSION" pytest \
+          uv pip install --quiet "tinybpf==$VERSION" pytest pytest-asyncio \
             --extra-index-url "$INDEX_URL"
           sudo .venv/bin/pytest repo/tests/ -v --tb=short

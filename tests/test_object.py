@@ -145,10 +145,18 @@ class TestBpfObjectErrors:
 
     def test_load_failure_includes_libbpf_output(self, core_fail_bpf_path: Path) -> None:
         """BpfError should include libbpf's detailed output on load failure."""
-        with pytest.raises(tinybpf.BpfError) as exc_info:
-            tinybpf.load(core_fail_bpf_path)
+        # The fixture provokes a CO-RE relocation against a field that may or
+        # may not exist depending on the running kernel's BTF (e.g. whether the
+        # tracepoint uses an inline array). On kernels where the relocation
+        # resolves, the load succeeds and there is no failure path to exercise.
+        try:
+            obj = tinybpf.load(core_fail_bpf_path)
+        except tinybpf.BpfError as exc:
+            error = exc
+        else:
+            obj.close()
+            pytest.skip("kernel BTF satisfies the CO-RE relocation; no load failure to inspect")
 
-        error = exc_info.value
         # Should have errno set
         assert error.errno != 0
         # Should have libbpf_log with detailed error info

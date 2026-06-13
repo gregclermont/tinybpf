@@ -42,6 +42,7 @@ jobs:
 
       - name: Run tests
         run: |
+          set -o pipefail
           sudo .venv/bin/pytest tests/ -v --tb=short 2>&1 | tee test-output.txt
 
       - name: Upload test logs
