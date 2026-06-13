@@ -261,5 +261,5 @@ For detailed guidance on CO-RE compatibility, event struct design, and debugging
 tinybpf docker-compile src/*.bpf.c
 ```
 
-Output files are written alongside sources. The Docker image includes libbpf headers and `vmlinux.h` (kernel 6.18) for CO-RE support. See [GUIDE.md](GUIDE.md#custom-vmlinuxh) to use a custom vmlinux.h for older kernels.
+Output files are written alongside sources. The Docker image includes libbpf headers and `vmlinux.h` (kernel 6.19) for CO-RE support. See [GUIDE.md](GUIDE.md#custom-vmlinuxh) to use a custom vmlinux.h for older kernels.
 

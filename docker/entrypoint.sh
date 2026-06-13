@@ -51,7 +51,7 @@ if [ $# -eq 0 ]; then
     echo "  -o PATH   Output directory, or file path when compiling a single file"
     echo ""
     echo "Environment:"
-    echo "  VMLINUX         Path to custom vmlinux.h (default: bundled kernel 6.18)"
+    echo "  VMLINUX         Path to custom vmlinux.h (default: bundled kernel 6.19)"
     echo "  EXTRA_CFLAGS    Additional compiler flags"
     echo ""
     echo "Examples:"

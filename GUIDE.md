@@ -17,7 +17,7 @@ tinybpf docker-compile src/*.bpf.c
 tinybpf docker-compile src/*.bpf.c -o build/
 ```
 
-The CLI uses a Docker image with libbpf headers and `vmlinux.h` (kernel 6.18) for CO-RE support. Output `.bpf.o` files are written alongside sources (or to the specified output directory).
+The CLI uses a Docker image with libbpf headers and `vmlinux.h` (kernel 6.19) for CO-RE support. Output `.bpf.o` files are written alongside sources (or to the specified output directory).
 
 <details>
 <summary>Using Docker directly</summary>
@@ -50,7 +50,7 @@ CO-RE (Compile Once, Run Everywhere) allows BPF programs compiled against one ke
 
 ### The vmlinux.h Source
 
-The Docker image bundles `vmlinux.h` from the official [libbpf/vmlinux.h](https://github.com/libbpf/vmlinux.h) repository (kernel 6.18). This is the same approach used by bcc/libbpf-tools and other production BPF tooling.
+The Docker image bundles `vmlinux.h` from the official [libbpf/vmlinux.h](https://github.com/libbpf/vmlinux.h) repository (kernel 6.19). This is the same approach used by bcc/libbpf-tools and other production BPF tooling.
 
 Bundled `vmlinux.h` covers x86_64 and aarch64. For other architectures, provide a custom vmlinux.h; see [Custom vmlinux.h](#custom-vmlinuxh) below.
 
